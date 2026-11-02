@@ -1,0 +1,63 @@
+name: deployment
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  # 刻意鎖版本；升級前先確認全書範例都通過。
+  MDBOOK_VERSION: "0.5.4"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # Linux 會依 pyproject.toml 的 tool.uv.sources 裝 CPU 版 torch
+        run: uv sync --locked
+
+      - name: Test the llmz package
+        run: uv run pytest
+
+      - name: Check Python examples in the book
+        run: uv run python tools/checkcode.py zh-TW/src
+
+      - name: Install mdBook
+        run: |
+          curl -sSL --fail "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C /usr/local/bin
+
+      - name: Build book
+        working-directory: zh-TW
+        run: mdbook build
+
+      # 給 AI 助教用的原始檔：保留 repo 結構，include 的相對路徑才對得上 src/llmz
+      - name: Package sources for AI
+        run: zip -r -q zh-TW/book/llm-book-src.zip zh-TW/src src tests pyproject.toml -x '*.DS_Store' '*/__pycache__/*'
+
+      - name: Assemble site
+        run: |
+          mkdir -p public
+          cp index.html public/index.html
+          cp -r zh-TW/book public/zh-TW
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./public
+
+      - id: deployment
+        uses: actions/deploy-pages@v5

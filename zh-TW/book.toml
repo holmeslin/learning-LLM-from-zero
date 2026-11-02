@@ -1,0 +1,18 @@
+[book]
+title = "從零開始學 LLM"
+authors = ["Holmes Lin"]
+language = "zh-TW"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/holmeslin/learning-LLM-from-zero"
+edit-url-template = "https://github.com/holmeslin/learning-LLM-from-zero/edit/main/zh-TW/{path}"
+site-url = "/learning-LLM-from-zero/zh-TW/"
+mathjax-support = true
+
+[output.html.playground]
+runnable = false
+
+[output.html.print]
+page-break = false

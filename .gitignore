@@ -1,0 +1,10 @@
+zh-TW/book/
+public/
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+# 讀者自己的練習檔與下載的資料、訓練輸出
+playground/
+data/
+runs/
