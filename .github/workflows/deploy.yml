@@ -21,7 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv 沒有 v10 浮動 tag，釘完整版號
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
