@@ -76,8 +76,10 @@
 | 第 11 章 | 推論 | `chapter11/` |
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 | 第 12 章 | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題、生成式評估與 LLM-as-judge、資料污染 | `chapter12/` |
+| 第 13 章（第 1～2 集） | 資料：Common Crawl 與 WARC、HTML 轉文字 | `chapter13/` |
+| 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 
-還沒寫：第 13～15 章。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 13 章第 3 集以後，第 14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -196,7 +198,10 @@
 | 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
 | 第 12 章第 4～5 集 | 生成式題目的三種評分（規則、執行、評審）、`llmz.evaluation`（`normalize_answer`（小寫、去標點與冠詞 a／an／the、併空白）、`exact_match`、`judge_prompt`、`judge_once`（比 ` A` 與 ` B` 的 log 機率）、`judge_pair`（兩個順序都問、一致才算、否則 `None`）、`ngram_hashes`（`uint64` 多項式雜湊，溢位即取 mod \\( 2^{64} \\)）、`ngram_index`（`np.unique` 排序去重）、`contamination_rate`（`np.searchsorted`；不到 n 個 token 回傳 `nan`））、exact match 太嚴與包含式太鬆、LLM-as-judge 的逐一打分與成對比較、評審偏誤（位置、長度、自我偏好；Zheng 等人 2023）、標籤偏誤與交換順序、資料污染、13-gram 重疊偵測（GPT-3 論文）、n 的權衡、`np.split`／`np.flatnonzero`／`np.isnan`／`re.sub`／`random.Random`、洩漏題目微調 10 步的實驗；標準模型在同一批 100 題上選擇題 88%、生成式 exact match 18/100，當評審在三種標籤下都是 100/200（選標籤字、不看內容）；題庫 105 題在 13-gram 上無重疊（18 題太短查不了）、驗證集有 8.2% 的 13-gram 出現在訓練集；洩漏的 50 題準確率升到 98%～100% |
-| 第 13 章以後 | 尚未出版 |
+| 第 13 章第 1～2 集 | Common Crawl 的 crawl、WARC／WAT／WET 三種格式、用 HTTP Range 下載 WARC 檔的前 32 MiB、WARC 記錄的結構（版本行、標頭、空行、`Content-Length` 個 byte、結尾 `\r\n\r\n`）與四種 `WARC-Type`（`warcinfo`／`request`／`response`／`metadata`）、每筆記錄是獨立的一段 gzip（截斷時丟掉最後一筆）、`gzip.open`／`gzip.compress`／`EOFError`、`llmz.pipeline`（`Page`（`NamedTuple`）、`iter_warc_records`、`split_http_response`、`decode_html`（HTTP 標頭與 `<meta>` 的 charset、`CHARSET_ALIASES`、U+FFFD、BOM）、`html_to_text`（`SKIP_TAGS`、`BLOCK_TAGS`、`skip_tags` 參數）、`iter_pages`、`write_pages`／`read_pages`）、`html.parser.HTMLParser`（`handle_starttag`／`handle_endtag`／`handle_data`、`feed`／`close`）、`for ... else`、JSON Lines（`json.dumps(ensure_ascii=False)`）、`urllib.parse.urlsplit`、`tools/prepare_webtext.py` 與 `data/cc/pages.jsonl`；M4 Max 實測：前 32 MiB 有 2,579 筆記錄、859 筆 response（狀態碼全是 200）、842 頁 HTML、817 個主機；什麼都不丟 20,368,432 個字元、丟 script 與 style 等 4,919,873、再丟 nav 等 4,413,284；817 頁有文字，存成 6,345,494 bytes |
+| 第 13 章第 3 集以後與第 14 章 | 尚未出版 |
+| 第 15 章第 1～3 集 | RL 的名詞（policy、reward、動作、平均獎勵 \\( J \\)）、多臂吃角子老虎機（bandit）、policy gradient \\( \nabla J = \mathbb{E}[R \nabla \log \pi(a)] \\)（log 導數技巧、softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`、抽樣估計的誤差約 \\( 1/\sqrt{n} \\)）、`llmz.rl`（`sample_actions`、`bandit_rewards`、`expected_reward`、`reinforce_loss`、`estimate_gradient`、`train_bandit`、`group_advantages`、`verifiable_rewards`、`train_groups`）、gradient ascent、REINFORCE（Williams 1992）與 baseline（不改變期望值、降低變異；批次平均把自己算進去所以縮小 \\( (n-1)/n \\)）、`torch.Generator().manual_seed`、GRPO 的組內平均 baseline 與除以標準差（樣本標準差、`eps`）、全組獎勵相同時 advantage 是 0、一組 \\( G \\) 個回答至少一個答對的機率 \\( 1-(1-p)^G \\)、玩具題 RLVR（3 個 prompt、答對機率 50%／10%／1%；除以標準差時困難題 400 步 0.96～0.98，不除只有 0.02～0.03） |
+| 第 15 章第 4 集以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -313,6 +318,11 @@
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
 | exact match、`normalize_answer`、LLM-as-judge、`judge_prompt`、`judge_once`、`judge_pair`、評審偏誤 | 第 12 章第 4 集 | 不評生成式題目 |
 | 資料污染、`ngram_hashes`、`ngram_index`、`contamination_rate`、n-gram 重疊偵測 | 第 12 章第 5 集 | 不談污染 |
+| Common Crawl、WARC 記錄、`iter_warc_records`、`split_http_response`、`data/cc/sample.warc.gz` | 第 13 章第 1 集 | 只用 TinyStories，不談網頁資料 |
+| `decode_html`、`html.parser`、`html_to_text`、`iter_pages`、`data/cc/pages.jsonl` | 第 13 章第 2 集 | 不談網頁轉文字 |
+| policy、reward、bandit、policy gradient、`reinforce_loss`、`estimate_gradient` | 第 15 章第 1 集 | 只說「用獎勵訓練模型」，不談梯度怎麼來 |
+| REINFORCE、`train_bandit`、baseline 與變異 | 第 15 章第 2 集 | 不談 baseline |
+| GRPO、`group_advantages`、`verifiable_rewards`、`train_groups`、是否除以標準差 | 第 15 章第 3 集 | 只說 advantage 是獎勵減 baseline |
 
 ---
 

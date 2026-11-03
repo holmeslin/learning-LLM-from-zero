@@ -2694,3 +2694,175 @@ for length in [40, 20]:
     for n in [13, 8, 5]:
         print(f"長度 {length}，n = {n}：{contamination_rate(edited, ngram_index(corpus, n), n):.4f}")
 ```
+
+## 第 13 章 資料：從網頁到訓練集
+
+### 第 1 集 Common Crawl 與 WARC — 狀態：可用
+
+**題目**
+
+WARC 檔裡每一筆記錄都是自己的一段 gzip，所以知道一筆記錄在檔案裡的起點（offset）與長度（length），就能只讀那一段，不必從頭讀。自己造一個 3 筆記錄的 `.warc.gz`（記錄內容自己編），記下每一段壓縮後的長度，寫一個函式 `read_at(path, offset, length)`：只讀檔案裡那一段 byte，用 `gzip.decompress` 解開，回傳記錄的原始 bytes。用它單獨讀出第 2 筆，印出它的 `WARC-Type`。
+
+**練習目標**：每筆記錄是獨立的 gzip 段，所以能用 Range 只取一筆；Common Crawl 的索引就是這樣用的。
+
+**批改重點**：第 2 筆的 offset 是前面所有段的壓縮後長度加起來，length 是它自己壓縮後的長度（不是解壓縮後的長度）；用 `f.seek(offset)` 與 `f.read(length)` 讀；讀出來的是 `WARC-Type: request`。提示：`gzip.compress` 回傳的 bytes 長度就是這一段在檔案裡佔的長度。常見錯誤：把整個檔案餵給 `gzip.decompress`，得到的是全部記錄接在一起。
+
+**參考答案**
+
+```python
+import gzip
+
+
+def read_at(path, offset, length):
+    with open(path, "rb") as f:
+        f.seek(offset)
+        return gzip.decompress(f.read(length))  # 這一段自己就是完整的 gzip
+
+
+members = []
+for warc_type in ["warcinfo", "request", "response"]:
+    body = f"toy {warc_type} content".encode()
+    head = f"WARC/1.0\r\nWARC-Type: {warc_type}\r\nContent-Length: {len(body)}\r\n\r\n".encode()
+    members.append(gzip.compress(head + body + b"\r\n\r\n"))
+with open("toy.warc.gz", "wb") as f:
+    f.write(b"".join(members))
+
+offset, length = len(members[0]), len(members[1])  # 第 2 筆：前面各段的長度加起來，就是它的起點
+record = read_at("toy.warc.gz", offset, length)
+print(f"offset {offset}，length {length}")
+print(record.split(b"\r\n")[1].decode())
+```
+
+### 第 2 集 HTML 轉文字 — 狀態：可用
+
+**題目**
+
+先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/sample.warc.gz`。用 `html_to_text` 的 `skip_tags` 參數，量出 `select`、`nav`、`footer`、`aside` 各自單獨加進 `{"script", "style", "noscript", "template", "svg", "iframe", "title"}` 之後，在那 842 頁 HTML 上多丟了幾個字元。哪一個標籤丟得最多？四個數字加起來，和第 2 集「一起丟」多丟的 506,589 個字元一樣嗎？為什麼？
+
+**練習目標**：用 `skip_tags` 參數做消融實驗，並看到標籤會巢狀、互相重疊。
+
+**批改重點**：`select` 125,562、`nav` 149,723、`footer` 117,575、`aside` 170,507 個字元，`aside` 最多；四個加起來是 563,367，比一起丟的 506,589 多。因為標籤可以巢狀（例如 `footer` 裡面再放一個 `nav`）：同一段文字在兩個要丟的標籤裡面時，各自單獨量每個都算了一次，一起丟時只算一次。提示：`html_to_text(html, skip_tags=...)`，集合可以用 `base | {tag}` 加一個標籤。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import decode_html, html_to_text, iter_warc_records, split_http_response
+
+htmls = []
+for headers, body in iter_warc_records("data/cc/sample.warc.gz"):
+    if headers["warc-type"] == "response":
+        status, http_headers, payload = split_http_response(body)
+        if status == 200 and "html" in http_headers.get("content-type", "").lower():
+            htmls.append(decode_html(payload, http_headers["content-type"]))
+
+base = {"script", "style", "noscript", "template", "svg", "iframe", "title"}
+before = sum(len(html_to_text(h, base)) for h in htmls)
+for tag in ["select", "nav", "footer", "aside"]:
+    after = sum(len(html_to_text(h, base | {tag})) for h in htmls)
+    print(f"{tag}：多丟 {before - after:,} 個字元")
+```
+
+## 第 15 章 後訓練：RL 與可驗證獎勵
+
+### 第 1 集 policy gradient 直覺 — 狀態：可用
+
+**題目**
+
+吃角子老虎機的平均獎勵是 `[0, 3, 2, 5, 4]`，policy 的 logits 是 `[1.0, 0.0, 0.0, -1.0, 0.5]`。不要抽樣：對 5 個動作各算 \\( \pi(a)\, R(a)\, (\text{one\_hot}(a) - \pi) \\)，加起來，和對 `expected_reward` 做 `backward()` 得到的梯度比較。
+
+**練習目標**：\\( \nabla J = \mathbb{E}[R \, \nabla \log \pi(a)] \\) 的期望值，真的就是把每個動作「機率乘上它的推力」加起來；抽樣只是用平均去逼近這個加總。
+
+**批改重點**：兩個向量相同，約 `[-0.805, 0.149, 0.001, 0.164, 0.491]`。要能說出：softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`；抽樣估計的平均會趨近這個加總。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+from llmz.rl import expected_reward
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.tensor([1.0, 0.0, 0.0, -1.0, 0.5], requires_grad=True)
+
+# 對照：直接對 expected_reward 做 backward
+expected_reward(logits, means).backward()
+
+# 不抽樣：把每個動作的 pi(a) * R(a) * (one_hot(a) - pi) 加起來
+with torch.no_grad():
+    probs = softmax(logits)
+    by_hand = sum(probs[a] * means[a] * ((torch.arange(5) == a).float() - probs) for a in range(5))
+
+print("手算的期望   ", [round(x, 3) for x in by_hand.tolist()])
+print("autograd 梯度", [round(x, 3) for x in logits.grad.tolist()])
+print("相同：", torch.allclose(by_hand, logits.grad, atol=1e-6))
+```
+
+### 第 2 集 REINFORCE 玩具版 — 狀態：可用
+
+**題目**
+
+`estimate_gradient` 的批次平均 baseline 把被抽到的樣本也算進平均，所以估計的平均會小 \\( (n-1)/n \\) 倍。改用 leave-one-out baseline：每個樣本的 baseline 是「其他 \\( n-1 \\) 個樣本獎勵的平均」。用 `sample_actions`、`bandit_rewards`、`reinforce_loss` 寫出 `loo_gradient`，取 \\( n=2 \\)、`noise_std=1.0`、policy 全 0，各重複 4000 次，比較「沒有 baseline」「批次平均」「leave-one-out」三種估計的平均（是精確梯度的幾倍）與變異加總。
+
+**練習目標**：baseline 只要和被抽到的動作無關就不影響期望值；批次平均違反了這一點，只是影響很小（\\( n \\) 大時）。
+
+**批改重點**：沒有 baseline 與 leave-one-out 的平均約是精確梯度的 1.0 倍，批次平均約 0.5 倍（\\( n=2 \\) 時 \\( (n-1)/n = 1/2 \\)）；變異加總約 4.5、0.8、3.2：leave-one-out 無偏，變異比沒有 baseline 小，但比批次平均大。數字隨隨機數種子略有變動（4000 次重複）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import bandit_rewards, estimate_gradient, expected_reward, reinforce_loss, sample_actions
+
+
+def loo_gradient(logits, means, n, noise_std, generator):
+    """leave-one-out baseline：每個樣本的 baseline 是「其他 n-1 個樣本獎勵的平均」。"""
+    logits = logits.detach().requires_grad_()
+    actions = sample_actions(logits, n, generator)
+    rewards = bandit_rewards(means, actions, noise_std, generator)
+    baselines = (rewards.sum() - rewards) / (n - 1)
+    reinforce_loss(logits.expand(n, -1), actions, rewards - baselines).backward()
+    return -logits.grad
+
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.zeros(5)
+exact = torch.zeros(5, requires_grad=True)
+expected_reward(exact, means).backward()
+exact = exact.grad
+
+n, repeats = 2, 4000
+generator = torch.Generator().manual_seed(0)
+runs = {
+    "沒有 baseline": torch.stack([estimate_gradient(logits, means, n, False, 1.0, generator) for _ in range(repeats)]),
+    "批次平均": torch.stack([estimate_gradient(logits, means, n, True, 1.0, generator) for _ in range(repeats)]),
+    "leave-one-out": torch.stack([loo_gradient(logits, means, n, 1.0, generator) for _ in range(repeats)]),
+}
+for name, g in runs.items():
+    scale = (g.mean(dim=0) @ exact / (exact @ exact)).item()  # 平均的方向上，是精確梯度的幾倍
+    print(f"{name:14s} 平均是精確梯度的 {scale:.2f} 倍，變異加總 {g.var(dim=0).sum().item():.2f}")
+```
+
+### 第 3 集 GRPO 的 group-relative advantage — 狀態：可用
+
+**題目**
+
+一組 8 個回答、答對 \\( k \\) 個（\\( k = 1, \dots, 7 \\)），獎勵是 1 或 0。對每個 \\( k \\)，用 `group_advantages` 印出答對與答錯的回答的 advantage，不除與除以標準差兩種都印。\\( k = 4 \\) 時，答對與答錯的 advantage 大小相等嗎？\\( k = 1 \\) 時答對的 advantage 是 \\( k = 4 \\) 時的幾倍（兩種算法分別算）？
+
+**練習目標**：group-relative advantage 讓稀有的成功拿到大的推力、常見的成功只拿到小的推力；除以標準差又把這個差距再拉開。
+
+**批改重點**：\\( k = 4 \\) 時兩者大小相等（不除：±0.5；除：±0.935）；\\( k = 1 \\) 時答對的是 +0.875（不除）與 +2.475（除），分別是 \\( k = 4 \\) 時的 1.75 倍與 2.65 倍。答對與答錯的 advantage 加權（各自乘上人數）後總和為 0。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import group_advantages
+
+for k in range(1, 8):  # 8 個回答裡答對 k 個
+    rewards = torch.tensor([[1.0] * k + [0.0] * (8 - k)])
+    plain, normed = group_advantages(rewards, normalize_std=False)[0], group_advantages(rewards, normalize_std=True)[0]
+    print(f"答對 {k} 個：答對的 advantage {plain[0]:+.3f}（不除）{normed[0]:+.3f}（除）；答錯的 {plain[-1]:+.3f}（不除）{normed[-1]:+.3f}（除）")
+```
