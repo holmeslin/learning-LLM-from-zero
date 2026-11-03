@@ -2566,3 +2566,68 @@ print(blocks * threads // 32, "個 warp")
 
 純對照表。
 
+## 第 12 章 評估
+
+### 第 1 集 perplexity 的限制 — 狀態：可用
+
+**題目**
+
+同一段 600 bytes 的文字，模型 A 的 tokenizer 把它切成 150 個 token，總 \\( -\log p \\) 是 345 nat；模型 B 的 tokenizer 切成 100 個 token，總 \\( -\log p \\) 是 310 nat。算出兩個模型每個 token 的 perplexity 與 bits/byte。誰比較好？
+
+**練習目標**：perplexity 的單位是每個 token，不同 tokenizer 要換成 bits/byte 才能比。
+
+**批改重點**：A 的 perplexity 9.97、B 是 22.20，只看 perplexity 會選 A；但 bits/byte A 是 0.830、B 是 0.745，B 其實比較好。bits/byte 是總 \\( -\log p \\) 除以 byte 數，再除以 \\( \ln 2 \\)。
+
+**參考答案**
+
+```python
+import math
+
+models = {"A": (150, 345.0), "B": (100, 310.0)}  # (token 數, 總 -log 機率 nat)
+for name, (n_tokens, nll) in models.items():
+    print(f"模型 {name}：每個 token 的 perplexity {math.exp(nll / n_tokens):.2f}，{nll / 600 / math.log(2):.3f} bits/byte")
+```
+
+### 第 2 集 benchmark 與 few-shot — 狀態：可用
+
+**題目**
+
+四選一的題庫，隨機猜測的準確率是 25%，標準差是 \\( \sqrt{p(1-p)/n} \\)（\\( n \\) 是題數）。題數是 100、400、1000、4000 時標準差各是幾個百分點？至少要幾題，標準差才會小於等於 1 個百分點？
+
+**練習目標**：題數決定分數的雜訊，100 題的題庫分不出差幾個百分點的兩個模型。
+
+**批改重點**：100 題 4.33、400 題 2.17、1000 題 1.37、4000 題 0.68 個百分點；\\( 0.1875 / 0.01^2 = 1875 \\) 題。
+
+**參考答案**
+
+```python
+p = 0.25  # 四選一亂猜的準確率
+for n in [100, 400, 1000, 1875, 4000]:
+    print(f"{n} 題：標準差 {(p * (1 - p) / n) ** 0.5 * 100:.2f} 個百分點")
+```
+
+### 第 3 集 loglikelihood 評多選題 — 狀態：可用
+
+**題目**
+
+兩個選項的總 log 機率是 \\( -5 \\)（1 個 token）與 \\( -6 \\)（4 個 token）。把分數改成 \\( \log p / \text{長度}^\alpha \\)，\\( \alpha = 0 \\) 是總和，\\( \alpha = 1 \\) 是每個 token 的平均。\\( \alpha \\) 從 0 開始每次加 0.05，第一次改選第二個選項是在哪裡？
+
+**練習目標**：長度正規化是一個連續的旋鈕，不是兩種截然不同的算法；`pick_choice` 的 `lengths` 可以傳任何分母。
+
+**批改重點**：\\( \alpha = 0.15 \\) 時第一次改選第二個。精確的門檻是 \\( \ln 1.2 / \ln 4 \approx 0.1315 \\)：在這之後 \\( -6/4^\alpha \\) 比 \\( -5 \\) 大。提示：把 `lengths ** alpha` 傳給 `pick_choice`。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.evaluation import pick_choice
+
+logprobs = torch.tensor([-5.0, -6.0])  # 第一個選項 1 個 token，第二個 4 個 token
+lengths = torch.tensor([1.0, 4.0])
+alphas = [i / 20 for i in range(21)]  # 0, 0.05, ..., 1
+flip = next(a for a in alphas if pick_choice(logprobs, lengths**a) == 1)
+print(f"alpha = {flip} 時第一次改選第二個選項（精確的門檻 {math.log(1.2) / math.log(4):.4f}）")
+```

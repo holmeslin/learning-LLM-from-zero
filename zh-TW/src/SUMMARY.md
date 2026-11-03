@@ -140,7 +140,10 @@
 
 # 第三部 評估、資料與對齊
 
-- [評估]()
+- [評估](chapter12/README.md)
+    - [perplexity 的限制](chapter12/01_perplexity_limits.md)
+    - [benchmark 與 few-shot](chapter12/02_benchmark_few_shot.md)
+    - [loglikelihood 評多選題](chapter12/03_loglikelihood_mcq.md)
 - [資料：從網頁到訓練集]()
 - [後訓練：SFT 與偏好學習]()
 - [後訓練：RL 與可驗證獎勵]()
