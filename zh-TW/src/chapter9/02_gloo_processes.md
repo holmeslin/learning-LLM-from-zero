@@ -27,6 +27,7 @@
 - `dist.init_process_group("gloo", init_method="tcp://127.0.0.1:port", rank, world_size)`：用 Gloo 後端加入群組。大家約好在本機的某個 port 碰面，等到 `world_size` 個都到齊才往下走。
 - port 用 `socket` 綁定 port 0 讓作業系統挑一個空的，這樣同時跑好幾個範例也不會撞到。
 - `GLOO_SOCKET_IFNAME` 告訴 Gloo 只走本機的網路介面（Mac 叫 `lo0`、Linux 叫 `lo`），不設的話它會印一行警告。
+- Linux 版的 Gloo 連線成功時會往標準輸出印一行訊息，書上的輸出要逐字比對，所以加入群組的那一刻用 `os.dup`／`os.dup2` 暫時把標準輸出（編號 1）導到 `os.devnull`，加入後再接回來。這和平行化無關，看過就好。
 - 結束前 `destroy_process_group()` 離開群組。
 
 ### 第一個多 process 程式

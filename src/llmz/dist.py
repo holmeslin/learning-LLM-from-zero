@@ -13,7 +13,14 @@ from torch import Tensor, nn
 
 # ANCHOR: launch
 def _worker(rank: int, world_size: int, port: int, fn: Callable, args: tuple) -> None:
-    dist.init_process_group("gloo", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=world_size)
+    saved = os.dup(1)
+    with open(os.devnull, "w") as devnull:
+        os.dup2(devnull.fileno(), 1)  # Linux 版 Gloo 連線成功時會往 stdout 印一行訊息，先藏起來
+        try:
+            dist.init_process_group("gloo", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=world_size)
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
     try:
         fn(rank, world_size, *args)
     finally:
