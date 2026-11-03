@@ -2540,3 +2540,29 @@ expert = 3 * d_model * d_ff
 print(f"每個專家 {expert:,}")
 print(f"全部專家 {expert * n_experts * n_layers / 1e9:.1f}B，每個 token 用 {expert * top_k * n_layers / 1e9:.1f}B")
 ```
+
+## 附錄二
+
+### a CUDA 與 Triton 入門指引 — 狀態：可用
+
+**題目**
+
+用附錄二 a 的 CUDA 向量相加處理 1,000,000 個元素、每個 block 256 個 thread。要開幾個 block？最後一個 block 有幾個 thread 因為 `if (i < n)` 什麼都不做？全部一共幾個 warp？
+
+**練習目標**：grid、block、warp 的換算，以及為什麼 kernel 要檢查邊界。
+
+**批改重點**：3907 個 block（無條件進位）；最後一個 block 有 192 個 thread 閒著；共 31256 個 warp。沒有 `if (i < n)` 時，這 192 個 thread 會寫到陣列外面。
+
+**參考答案**
+
+```python
+n, threads = 1_000_000, 256
+blocks = (n + threads - 1) // threads
+print(blocks, "個 block，", blocks * threads - n, "個 thread 閒著")
+print(blocks * threads // 32, "個 warp")
+```
+
+### b 對照 CS336 A2、A3 — 狀態：不出題
+
+純對照表。
+

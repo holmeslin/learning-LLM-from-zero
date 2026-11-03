@@ -134,7 +134,9 @@
     - [speculative decoding](chapter11/05_speculative_decoding.md)
     - [量化初探](chapter11/06_quantization.md)
     - [MoE 與 attention 替代方案](chapter11/07_moe_attention_alternatives.md)
-- [附錄二]()
+- [附錄二](appendix2/README.md)
+    - [CUDA 與 Triton 入門指引（選讀：需 GPU）](appendix2/a_cuda_triton.md)
+    - [對照 CS336 A2、A3](appendix2/b_cs336_a2_a3.md)
 
 # 第三部 評估、資料與對齊
 

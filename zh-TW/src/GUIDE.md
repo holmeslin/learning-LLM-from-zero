@@ -74,8 +74,9 @@
 | 第 9 章 | 平行化：原理與 CPU 模擬 | `chapter9/` |
 | 第 10 章 | Scaling laws | `chapter10/` |
 | 第 11 章 | 推論 | `chapter11/` |
+| 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 
-還沒寫：第二部的附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -191,7 +192,8 @@
 | 第 9 章 | 多卡的記憶體與時間估算、四種分法、rank／world size、`torch.multiprocessing.spawn`、`dist.init_process_group("gloo", ...)`、`dist.barrier`、`llmz.dist`（`launch`、`print_in_order`、`ring_all_reduce`（`isend`／`recv`、`chunk` 的 view）、`broadcast_parameters`、`all_reduce_gradients`、`BucketedDDP`（`register_post_accumulate_grad_hook`、`async_op=True` 與 `.wait()`、25 MB bucket）、`ShardedOptimizer`（大的先分、`optimizer_cls` 與 `**kwargs`））、`dist.broadcast`／`all_reduce`／`all_gather`／`reduce_scatter`／`all_gather_into_tensor`／`reduce_scatter_tensor`、all-reduce = reduce-scatter + all-gather、ring 的通訊量 \\( 2(N-1)/N \cdot S \\)、ZeRO 1／2／3 與 FSDP 的記憶體與通訊、tensor parallel 的 column／row 切法、pipeline 的 micro-batch 與 bubble \\( (p-1)/(m+p-1) \\)、計算與通訊的比值 \\( 1.5\,BT\cdot\text{BW}/F \\)、M4 Max 上 Gloo 約 0.5～0.65 GB/s |
 | 第 10 章 | 冪律與 log-log 直線、Kaplan 的 \\( L(N) = (N_c/N)^{0.076} \\)、\\( C \approx 6ND \\) 的取捨與 IsoFLOPs 的 U 形、Chinchilla 公式 \\( E + A/N^\alpha + B/D^\beta \\) 與每個參數約 20 個 token（及公式第三種方法的差異）、`llmz.scaling`（`chinchilla_loss`、`fit_isoflop_minimum`（對 log N 擬合拋物線）、`fit_power_law`（log-log 直線）、`non_embedding_params`、`steps_for_budget`）、`np.polyfit`／`np.logspace`／`np.argmin`／`np.random.default_rng`、外推的誤差放大、`tools/scaling_sweep.py` 與 Mac 上 13 個小模型的實測、Besiroglu 等人的重新擬合、過度訓練小模型、μP 的想法 |
 | 第 11 章 | KV cache 的原理（舊位置的 k、v 不變）、`llmz.inference`（`KVCache`（預先配置 `(n_layers, B, H, max_len, d_head)`、`length`、`nbytes`）、`attention_cached`（RoPE 位置從 `cache.length` 接續、對整個 cache 做 attention 並用 mask 遮掉，形狀固定）、`forward_cached`（只支援 pre-norm、總長不超過 `context_length`）、`pick_next`、`generate_cached`、`to_probs`、`accept_or_resample`、`speculative_generate`（兩個 cache、退回 `length`）、`quantize`／`dequantize`（對稱、per-channel 與分組）、`quantize_model_`（模擬量化））、prefill 與 decode（compute-bound 與 memory-bound、intensity 約 \\( T/2 \\)）、`statistics.median`、推論記憶體（權重 + KV cache）與 decode 下限（權重位元組 ÷ 頻寬）、Llama 3 8B 的設定與 GQA／MQA、batching（M4 Max 實測）與 padding／continuous batching／PagedAttention、speculative decoding 的接受規則與實測、`for ... else`、量化的離群值與分組（實測 int8／int4／int3／int2 的 loss）、MoE（router、top-k、`torch.topk`、`torch.where`、`torch.bincount`、輔助 loss）、MLA、sliding window、線性 attention 與 state space model |
-| 附錄二以後 | 尚未出版 |
+| 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
+| 第 12 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -302,6 +304,7 @@
 | speculative decoding、`speculative_generate` | 第 11 章第 5 集 | 一次一個 token |
 | 量化、`quantize`、`quantize_model_` | 第 11 章第 6 集 | float32 權重 |
 | MoE、attention 替代方案 | 第 11 章第 7 集 | 不談 |
+| CUDA kernel、`load_inline`、`torch.cuda.Event`、memory snapshot | 附錄二 a | 用 PyTorch 運算、`timeit` 與 `torch.profiler` |
 
 ---
 
