@@ -10,7 +10,7 @@
 
 上一集的流程叫 **RLHF**（reinforcement learning from human feedback，從人類回饋做強化學習）：先用偏好資料訓練一個獎勵模型 \\( r(x, y) \\)，再讓語言模型 \\( \pi \\) 去寫分數高的回答。只追分數會出問題：獎勵模型是從有限的偏好資料學來的，不完美，模型很快會找到它打分的漏洞，寫出分數很高、人看了卻很奇怪的回答。所以目標裡加一個拉回來的力量：
 
-\\[ \max_\pi \; \mathbb{E}_{y \sim \pi(\cdot|x)}\big[ r(x, y) \big] - \beta \, \mathrm{KL}\big( \pi(\cdot|x) \,\|\, \pi_{\text{ref}}(\cdot|x) \big) \tag{1} \\]
+\\[ \max\_\pi \\; \mathbb{E}\_{y \sim \pi(\cdot|x)}\big[ r(x, y) \big] - \beta \\, \mathrm{KL}\big( \pi(\cdot|x) \\,\\|\\, \pi\_{\text{ref}}(\cdot|x) \big) \tag{1} \\]
 
 - \\( \pi_{\text{ref}} \\) 是 **reference 模型**，這裡就是 SFT 之後、還沒動過的模型；\\( \pi \\) 是正在調整的 **policy**，從同一個起點開始。
 - \\( \mathrm{KL}(\pi \| \pi_{\text{ref}}) = \sum_y \pi(y) \log \frac{\pi(y)}{\pi_{\text{ref}}(y)} \\) 衡量 \\( \pi \\) 離 \\( \pi_{\text{ref}} \\) 有多遠，相同時是 0。
@@ -22,7 +22,7 @@
 
 (1) 的最佳解是：
 
-\\[ \pi^*(y|x) = \frac{1}{Z(x)} \, \pi_{\text{ref}}(y|x) \, \exp\!\Big( \frac{r(x, y)}{\beta} \Big) \tag{2} \\]
+\\[ \pi^\*(y|x) = \frac{1}{Z(x)} \\, \pi\_{\text{ref}}(y|x) \\, \exp\\!\Big( \frac{r(x, y)}{\beta} \Big) \tag{2} \\]
 
 reference 原本給的機率，乘上 \\( e^{r/\beta} \\)：獎勵高的回答被放大，低的縮小；\\( Z(x) \\) 是讓機率加起來等於 1 的常數。用四個可能的回覆驗證：
 
@@ -75,13 +75,13 @@ beta * log(pi*/ref) 減掉 r： [-1.3262, -1.3262, -1.3262, -1.3262]
 
 - \\( \pi^* \\) 的目標值最高，比「幾乎全押最高獎勵」還高：全押的 KL 太大。
 - 附近一萬個隨機擾動的分布，沒有一個比它高。
-- 最後兩行就是下一步：把 (2) 取 log 解出 \\( r \\)，\\( r(x, y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x) \\)。程式驗證了每個回覆的 \\( \beta \log(\pi^*/\pi_{\text{ref}}) - r \\) 都等於同一個數字 \\( -\beta \log Z \\)。
+- 最後兩行就是下一步：把 (2) 取 log 解出 \\( r \\)，\\( r(x, y) = \beta \log \frac{\pi^\*(y|x)}{\pi\_{\text{ref}}(y|x)} + \beta \log Z(x) \\)。程式驗證了每個回覆的 \\( \beta \log(\pi^\*/\pi\_{\text{ref}}) - r \\) 都等於同一個數字 \\( -\beta \log Z \\)。
 
 ### 代進 Bradley–Terry
 
 獎勵可以用 policy 與 reference 的機率比表示：\\( r = \beta \log(\pi/\pi_{\text{ref}}) + \beta \log Z \\)。把它代進上一集的 Bradley–Terry loss，\\( r_{\text{chosen}} - r_{\text{rejected}} \\) 裡兩個 \\( \beta \log Z(x) \\) 因為提示 \\( x \\) 相同，剛好抵消（上一集看過：分數整個平移，loss 不變）。\\( Z(x) \\) 不好算，現在不用算了：
 
-\\[ \mathcal{L}_{\text{DPO}} = -\log \sigma\Big( \beta \log \frac{\pi(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \Big) \tag{3} \\]
+\\[ \mathcal{L}\_{\text{DPO}} = -\log \sigma\Big( \beta \log \frac{\pi(y\_w|x)}{\pi\_{\text{ref}}(y\_w|x)} - \beta \log \frac{\pi(y\_l|x)}{\pi\_{\text{ref}}(y\_l|x)} \Big) \tag{3} \\]
 
 \\( y_w \\) 是 chosen，\\( y_l \\) 是 rejected。**policy 自己就是獎勵模型**：\\( \beta \log(\pi/\pi_{\text{ref}}) \\) 叫做**隱含獎勵**（implicit reward）。要訓練的東西只有一個語言模型，需要的資料是四個 log 機率：policy 與 reference 各算 chosen 與 rejected 一次。
 
