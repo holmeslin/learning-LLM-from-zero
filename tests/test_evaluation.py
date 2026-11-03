@@ -1,14 +1,23 @@
 import math
 from collections import Counter
 
+import numpy as np
 import torch
 from torch import nn
 
 from llmz.evaluation import (
     build_prompt,
     choice_logprobs,
+    contamination_rate,
+    exact_match,
+    judge_once,
+    judge_pair,
+    judge_prompt,
     load_mcq,
     mcq_accuracy,
+    ngram_hashes,
+    ngram_index,
+    normalize_answer,
     pick_choice,
     predict_mcq,
     sequence_logprob,
@@ -156,3 +165,122 @@ def test_packaged_question_set_is_well_formed():
         assert 0 <= it["answer"] < 4
         assert all(c.startswith(" ") for c in it["choices"])  # 選項開頭帶空格，接在 context 後面才是正常文字
     assert Counter(it["answer"] for it in test) == {0: 25, 1: 25, 2: 25, 3: 25}  # 正確答案的位置沒有偏向
+
+
+def test_normalize_answer_lowercases_and_drops_punctuation_articles_and_extra_spaces():
+    assert normalize_answer("  An Apple,   please!  ") == "apple please"
+    assert normalize_answer("The cat's hat.") == "cats hat"
+    assert normalize_answer("banana") == "banana"  # 單字裡的 a 不是冠詞，不能被拿掉
+
+
+def test_exact_match_is_strict_about_content_but_not_about_format():
+    assert exact_match(" The Park!", "park")
+    assert exact_match("a red ball.", "Red  ball")
+    assert not exact_match("red ball", "ball")  # 子字串不算
+    assert not exact_match("the park", "the playground")
+    assert not exact_match("water", "cold water and drank it all.")  # 意思對但說得不一樣
+
+
+class CodeTokenizer:
+    """每個字元一個 token（編號就是 ord），vocab 128。"""
+
+    def encode(self, text: str) -> list[int]:
+        return [ord(ch) for ch in text]
+
+
+class FixedLabelLM(nn.Module):
+    """不管題目是什麼，永遠偏好標籤 label：只看標籤的偏誤評審。"""
+
+    def __init__(self, label: str):
+        super().__init__()
+        self.label, self.dummy = label, nn.Parameter(torch.zeros(1))
+        self.cfg = ModelConfig(vocab_size=128, context_length=512)
+
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        logits = torch.zeros(*ids.shape, 128)
+        logits[..., ord(self.label)] = 5.0
+        return logits
+
+
+class KeywordJudgeLM(FixedLabelLM):
+    """看內容的評審：選項文字裡有 "ok" 的比較好，不管它被標成哪個標籤。"""
+
+    def __init__(self, labels=("A", "B")):
+        super().__init__("A")
+        self.labels = labels
+
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        logits = torch.zeros(*ids.shape, 128)
+        for b, row in enumerate(ids):
+            first_option = "".join(map(chr, row.tolist())).split(f"\n{self.labels[1]}.")[0]
+            logits[b, :, ord(self.labels[0] if "ok" in first_option else self.labels[1])] = 5.0
+        return logits
+
+
+def test_judge_prompt_lists_the_two_options_under_their_labels():
+    prompt = judge_prompt("Tom was hungry, so he ate", " a pie.", " a rock.")
+    assert prompt == "Which ending makes more sense?\n\nStory: Tom was hungry, so he ate\nA. a pie.\nB. a rock.\n\nAnswer:"
+    assert "1. a pie.\n2. a rock." in judge_prompt("x", " a pie.", " a rock.", labels=("1", "2"))
+
+
+def test_judge_once_follows_the_label_it_prefers_so_swapping_the_options_exposes_label_bias():
+    tok = CodeTokenizer()
+    biased = FixedLabelLM("A")
+    assert judge_once(biased, tok, "Story", " ok.", " bad.") == 0  # 永遠說 A，所以永遠選第一個
+    assert judge_once(biased, tok, "Story", " bad.", " ok.") == 0  # 換位置也一樣
+    assert judge_once(biased, tok, "Story", " bad.", " ok.", labels=("B", "A")) == 1  # 標籤對調：A 現在是第二個
+
+
+def test_judge_pair_needs_both_orders_to_agree():
+    tok = CodeTokenizer()
+    assert judge_pair(KeywordJudgeLM(), tok, "Story", " ok.", " bad.") == 0  # 看內容：兩個順序都選到有 ok 的
+    assert judge_pair(KeywordJudgeLM(), tok, "Story", " bad.", " ok.") == 1
+    assert judge_pair(FixedLabelLM("A"), tok, "Story", " ok.", " bad.") is None  # 只看標籤：兩個順序打架
+    assert judge_pair(FixedLabelLM("B"), tok, "Story", " ok.", " bad.") is None
+
+
+def random_tokens(n: int, seed: int) -> np.ndarray:
+    return np.random.default_rng(seed).integers(0, 10000, n)
+
+
+def test_ngram_hashes_depend_on_content_and_order_not_position():
+    tokens = np.array([5, 6, 7, 8, 5, 6, 7])
+    h = ngram_hashes(tokens, 3)
+    assert len(h) == 5 and h.dtype == np.uint64  # T - n + 1 個
+    assert h[0] == h[4]  # [5, 6, 7] 出現兩次，雜湊相同
+    assert len({int(x) for x in h}) == 4
+    assert ngram_hashes(np.array([7, 6, 5]), 3)[0] != h[0]  # 順序不同就是不同的 n-gram
+    assert len(ngram_hashes(np.array([1, 2]), 3)) == 0
+
+
+def test_contamination_is_one_for_copied_text_and_zero_for_unrelated_text():
+    corpus = random_tokens(5000, seed=0)
+    index = ngram_index(corpus)  # n 預設 13
+    copied, unrelated = corpus[1234:1274], random_tokens(40, seed=1)
+    assert contamination_rate(copied, index) == 1.0
+    assert contamination_rate(unrelated, index) == 0.0
+    assert contamination_rate(copied.tolist(), index) == 1.0  # 串列也可以
+
+
+def test_contamination_counts_the_fraction_of_overlapping_ngrams():
+    corpus = random_tokens(5000, seed=0)
+    index = ngram_index(corpus, n=13)
+    mixed = np.concatenate([corpus[100:120], random_tokens(20, seed=2)])  # 前 20 個抄來的，後 20 個是新的
+    # 40 個 token 有 28 個 13-gram；完全落在抄來那段裡的有 20 - 12 = 8 個
+    assert contamination_rate(mixed, index) == 8 / 28
+    # 只抄 12 個 token，湊不出任何一個完整的 13-gram
+    assert contamination_rate(np.concatenate([corpus[100:112], random_tokens(8, seed=3)]), index) == 0.0
+    assert contamination_rate(np.concatenate([corpus[100:112], random_tokens(8, seed=3)]), ngram_index(corpus, n=12), n=12) > 0
+
+
+def test_contamination_of_text_shorter_than_n_is_undefined():
+    index = ngram_index(random_tokens(100, seed=0))
+    assert np.isnan(contamination_rate(random_tokens(12, seed=0), index))  # 沒有 13-gram 就不能說乾淨
+
+
+def test_contamination_works_on_the_uint16_memmap_layout_of_the_corpus(tmp_path):
+    corpus = random_tokens(2000, seed=0).astype(np.uint16)
+    corpus.tofile(tmp_path / "t.bin")
+    mapped = np.memmap(tmp_path / "t.bin", dtype=np.uint16, mode="r")
+    assert contamination_rate(corpus[500:530], ngram_index(mapped)) == 1.0
+    assert contamination_rate(random_tokens(30, seed=9).astype(np.uint16), ngram_index(mapped)) == 0.0

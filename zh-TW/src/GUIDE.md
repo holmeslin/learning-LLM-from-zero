@@ -75,9 +75,9 @@
 | 第 10 章 | Scaling laws | `chapter10/` |
 | 第 11 章 | 推論 | `chapter11/` |
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
-| 第 12 章（第 1～3 集） | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題 | `chapter12/` |
+| 第 12 章 | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題、生成式評估與 LLM-as-judge、資料污染 | `chapter12/` |
 
-還沒寫：第 12 章第 4、5 集，以及第 13～15 章。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 13～15 章。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -195,7 +195,8 @@
 | 第 11 章 | KV cache 的原理（舊位置的 k、v 不變）、`llmz.inference`（`KVCache`（預先配置 `(n_layers, B, H, max_len, d_head)`、`length`、`nbytes`）、`attention_cached`（RoPE 位置從 `cache.length` 接續、對整個 cache 做 attention 並用 mask 遮掉，形狀固定）、`forward_cached`（只支援 pre-norm、總長不超過 `context_length`）、`pick_next`、`generate_cached`、`to_probs`、`accept_or_resample`、`speculative_generate`（兩個 cache、退回 `length`）、`quantize`／`dequantize`（對稱、per-channel 與分組）、`quantize_model_`（模擬量化））、prefill 與 decode（compute-bound 與 memory-bound、intensity 約 \\( T/2 \\)）、`statistics.median`、推論記憶體（權重 + KV cache）與 decode 下限（權重位元組 ÷ 頻寬）、Llama 3 8B 的設定與 GQA／MQA、batching（M4 Max 實測）與 padding／continuous batching／PagedAttention、speculative decoding 的接受規則與實測、`for ... else`、量化的離群值與分組（實測 int8／int4／int3／int2 的 loss）、MoE（router、top-k、`torch.topk`、`torch.where`、`torch.bincount`、輔助 loss）、MLA、sliding window、線性 attention 與 state space model |
 | 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
-| 第 12 章第 4 集以後 | 尚未出版 |
+| 第 12 章第 4～5 集 | 生成式題目的三種評分（規則、執行、評審）、`llmz.evaluation`（`normalize_answer`（小寫、去標點與冠詞 a／an／the、併空白）、`exact_match`、`judge_prompt`、`judge_once`（比 ` A` 與 ` B` 的 log 機率）、`judge_pair`（兩個順序都問、一致才算、否則 `None`）、`ngram_hashes`（`uint64` 多項式雜湊，溢位即取 mod \\( 2^{64} \\)）、`ngram_index`（`np.unique` 排序去重）、`contamination_rate`（`np.searchsorted`；不到 n 個 token 回傳 `nan`））、exact match 太嚴與包含式太鬆、LLM-as-judge 的逐一打分與成對比較、評審偏誤（位置、長度、自我偏好；Zheng 等人 2023）、標籤偏誤與交換順序、資料污染、13-gram 重疊偵測（GPT-3 論文）、n 的權衡、`np.split`／`np.flatnonzero`／`np.isnan`／`re.sub`／`random.Random`、洩漏題目微調 10 步的實驗；標準模型在同一批 100 題上選擇題 88%、生成式 exact match 18/100，當評審在三種標籤下都是 100/200（選標籤字、不看內容）；題庫 105 題在 13-gram 上無重疊（18 題太短查不了）、驗證集有 8.2% 的 13-gram 出現在訓練集；洩漏的 50 題準確率升到 98%～100% |
+| 第 13 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -310,6 +311,8 @@
 | perplexity 的單位、bits per byte、領域與 greedy 的陷阱 | 第 12 章第 1 集 | 只看 perplexity 或 loss |
 | benchmark、`load_mcq`、zero-shot 與 few-shot、`build_prompt`、亂猜的雜訊 | 第 12 章第 2 集 | 不談評測 |
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
+| exact match、`normalize_answer`、LLM-as-judge、`judge_prompt`、`judge_once`、`judge_pair`、評審偏誤 | 第 12 章第 4 集 | 不評生成式題目 |
+| 資料污染、`ngram_hashes`、`ngram_index`、`contamination_rate`、n-gram 重疊偵測 | 第 12 章第 5 集 | 不談污染 |
 
 ---
 
