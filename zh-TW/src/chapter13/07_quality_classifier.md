@@ -15,7 +15,7 @@ GPT-3 的論文（Brown 等人，2020，arXiv 2005.14165）附錄 A 就是這樣
 我們做同樣的事，規模縮到一台筆電：
 
 - 正例：標準語料（TinyStories）的故事。
-- 負例：上一章抽出來的網頁。
+- 負例：本章第 1、2 集抽出來的網頁。
 - 特徵：每份文件前 256 個詞的每個詞與每對相鄰的詞，雜湊到固定數量的 bucket。
 - 模型：logistic regression，用本書自己的 `AdamW` 訓練。
 
@@ -150,7 +150,7 @@ loss 從 \\( \ln 2 \approx 0.69 \\)（還沒學，兩邊各一半）降到接近
 
 ### 在真的資料上
 
-設定：正例是 `data/train.txt` 隨機抽的 2 萬篇故事，負例是上一章的網頁。網頁只有 817 頁，要小心兩件事。第一，同一個網站的頁面長得很像（一樣的選單、一樣的頁尾），如果同一個網站的頁面同時出現在訓練與驗證，分數會高估。所以我們用網址的主機名稱決定一頁屬於哪一份，同一個網站一定在同一邊。第二，驗證要用沒看過的資料：驗證故事來自 `data/valid.txt`，驗證網頁是留下來的 5 份之一。
+設定：正例是 `data/train.txt` 隨機抽的 2 萬篇故事，負例是本章第 1、2 集抽出來的網頁。網頁只有 817 頁，要小心兩件事。第一，同一個網站的頁面長得很像（一樣的選單、一樣的頁尾），如果同一個網站的頁面同時出現在訓練與驗證，分數會高估。所以我們用網址的主機名稱決定一頁屬於哪一份，同一個網站一定在同一邊。第二，驗證要用沒看過的資料：驗證故事來自 `data/valid.txt`，驗證網頁是留下來的 5 份之一。
 
 先看 bucket 的數量有沒有影響。每個設定訓練 300 步（每步 64 篇，一半一半），種子 0 與 1 各一次：
 
@@ -285,8 +285,6 @@ import time
 import zlib
 from urllib.parse import urlsplit
 
-import torch
-
 from llmz.pipeline import gopher_check, read_pages, train_quality
 
 
@@ -300,44 +298,44 @@ fold = [zlib.crc32(urlsplit(p.url).hostname.encode()) % 5 for p in pages]  # 同
 stories = read_stories("data/train.txt", 20000, 0)
 
 start = time.perf_counter()
-scores = torch.zeros(len(pages))  # 每一頁的分數，來自「沒看過這一頁、也沒看過同一個網站」的模型
+scores = [0.0] * len(pages)  # 每一頁的分數，來自「沒看過這一頁、也沒看過同一個網站」的模型
 for k in range(5):
     train_web = [p.text for p, f in zip(pages, fold) if f != k]
     model, _ = train_quality(stories + train_web, [1] * len(stories) + [0] * len(train_web))
     rows = [i for i, f in enumerate(fold) if f == k]
-    scores[rows] = model.score([pages[i].text for i in rows])
+    for i, score in zip(rows, model.score([pages[i].text for i in rows]).tolist()):
+        scores[i] = score
 print(f"訓練 5 個模型，共 {time.perf_counter() - start:.0f} 秒")
 
-q = torch.quantile(scores, torch.tensor([0.0, 0.1, 0.5, 0.9, 1.0]))
-print("分數（logit）的最小值、10%、中位數、90%、最大值：", [round(x, 1) for x in q.tolist()])
-print(f"分數大於 0（機率過半）的有 {(scores > 0).sum().item()} 頁")
-edges = torch.tensor([-100.0, -8, -6, -4, -2, 0, 100])
-counts = torch.histogram(scores, edges).hist.long().tolist()
-for lo, hi, n in zip(edges[:-1].tolist(), edges[1:].tolist(), counts):
-    print(f"  [{lo:>6.0f}, {hi:>4.0f})：{n:3d} 頁")
+ranked = sorted(scores)
+print("分數（logit）的最小值、10%、中位數、90%、最大值：", [round(ranked[round(f * (len(ranked) - 1))], 1) for f in [0, 0.1, 0.5, 0.9, 1]])
+print(f"分數大於 0（機率過半）的有 {sum(s > 0 for s in scores)} 頁")
+edges = [-100, -8, -6, -4, -2, 0, 100]
+for lo, hi in zip(edges, edges[1:]):
+    print(f"  [{lo:>4}, {hi:>3})：{sum(lo <= s < hi for s in scores):3d} 頁")
 
 passed = [gopher_check(p.text)[0] for p in pages]
 for name, flag in [("通過", True), ("沒通過", False)]:
-    mine = [s for s, ok in zip(scores.tolist(), passed) if ok == flag]
+    mine = [s for s, ok in zip(scores, passed) if ok == flag]
     print(f"Gopher {name}的 {len(mine)} 頁：分數的中位數 {statistics.median(mine):.1f}")
-order = scores.argsort(descending=True).tolist()
+order = sorted(range(len(pages)), key=lambda i: -scores[i])
 for share in [0.1, 0.25, 0.5]:
     top = order[: round(len(pages) * share)]
     print(f"分數最高的 {share:.0%}（{len(top)} 頁）裡，通過 Gopher 的有 {sum(passed[i] for i in top)} 頁")
 ```
 
-M4 Max 上的輸出（分數與頁數每次相同，秒數是這一次的，另一次是 32 秒）：
+M4 Max 上的輸出（分數與頁數每次相同，秒數是這一次的，另外兩次是 32、52 秒）：
 
 ```text
-訓練 5 個模型，共 52 秒
+訓練 5 個模型，共 61 秒
 分數（logit）的最小值、10%、中位數、90%、最大值： [-9.9, -7.1, -5.6, -3.8, 1.3]
 分數大於 0（機率過半）的有 2 頁
-  [  -100,   -8)： 24 頁
-  [    -8,   -6)：273 頁
-  [    -6,   -4)：422 頁
-  [    -4,   -2)： 80 頁
-  [    -2,    0)： 16 頁
-  [     0,  100)：  2 頁
+  [-100,  -8)： 24 頁
+  [  -8,  -6)：273 頁
+  [  -6,  -4)：422 頁
+  [  -4,  -2)： 80 頁
+  [  -2,   0)： 16 頁
+  [   0, 100)：  2 頁
 Gopher 通過的 233 頁：分數的中位數 -4.5
 Gopher 沒通過的 584 頁：分數的中位數 -5.8
 分數最高的 10%（82 頁）裡，通過 Gopher 的有 69 頁
@@ -359,14 +357,14 @@ uv run python tools/train_quality.py --smoke --out runs/quality/quality_smoke.pt
 uv run python tools/train_quality.py
 ```
 
-M4 Max 上的輸出（秒數是這一次的：smoke 兩次是 2.8、4.1 秒，完整的三次是 7.9、9.3、9.6 秒；其餘每次相同）：
+M4 Max 上的輸出（秒數是這一次的：smoke 三次是 2.1～4.1 秒，完整的四次是 7.9～9.6 秒；其餘每次相同）：
 
 ```text
-2,000 篇故事 + 817 頁網頁，4096 個 bucket，100 步：2.8 秒
+2,000 篇故事 + 817 頁網頁，4096 個 bucket，100 步：2.1 秒
 loss 0.693 → 0.1068（最後 20 步的平均）
 訓練資料上判成像標準語料的比例：故事 100.00%，網頁 0.12%
 存到 runs/quality/quality_smoke.pt
-20,000 篇故事 + 817 頁網頁，65536 個 bucket，300 步：9.6 秒
+20,000 篇故事 + 817 頁網頁，65536 個 bucket，300 步：8.9 秒
 loss 0.693 → 0.0045（最後 20 步的平均）
 訓練資料上判成像標準語料的比例：故事 100.00%，網頁 0.00%
 存到 runs/quality/quality.pt
