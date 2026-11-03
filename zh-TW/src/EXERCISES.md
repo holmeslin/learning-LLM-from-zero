@@ -2632,6 +2632,69 @@ flip = next(a for a in alphas if pick_choice(logprobs, lengths**a) == 1)
 print(f"alpha = {flip} 時第一次改選第二個選項（精確的門檻 {math.log(1.2) / math.log(4):.4f}）")
 ```
 
+### 第 4 集 生成式評估與 LLM-as-judge — 狀態：可用
+
+**題目**
+
+寫一個比 `exact_match` 寬鬆的 `contains_match(prediction, reference)`：兩邊各自正規化（`normalize_answer`）之後，只要標準答案的字連續出現在預測裡就算對（要以整個字為單位，`cat` 不能算在 `scattered` 裡）。對下面 5 組（預測，標準答案）各印出 `exact_match` 與 `contains_match` 的結果，說明放寬之後多出來的「對」有沒有誤判：
+
+1. `"A red ball."`、`"red ball"`
+2. `"water, and then he drank it all"`、`"water"`
+3. `"I do not like the park"`、`"like the park"`
+4. `"scattered"`、`"cat"`
+5. `"cold"`、`"cold water"`
+
+**練習目標**：放寬評分規則換來的是另一種錯誤；exact match 太嚴，包含式又太鬆。
+
+**批改重點**：第 1 組兩個都對；第 2 組只有 contains 對，而且是合理的（答案確實在裡面）；第 3 組 contains 也對，但這是誤判：句子的意思是不喜歡，包含式看不出否定；第 4、5 組兩個都錯。提示：正規化之後在兩邊各加一個空格再用 `in`，就能以整個字比對。
+
+**參考答案**
+
+```python
+from llmz.evaluation import exact_match, normalize_answer
+
+
+def contains_match(prediction: str, reference: str) -> bool:
+    return f" {normalize_answer(reference)} " in f" {normalize_answer(prediction)} "  # 兩邊加空格：只算整個字
+
+
+pairs = [
+    ("A red ball.", "red ball"),
+    ("water, and then he drank it all", "water"),
+    ("I do not like the park", "like the park"),
+    ("scattered", "cat"),
+    ("cold", "cold water"),
+]
+for prediction, reference in pairs:
+    print(f"{prediction!r} 對 {reference!r}：exact {exact_match(prediction, reference)}，contains {contains_match(prediction, reference)}")
+```
+
+### 第 5 集 資料污染 — 狀態：可用
+
+**題目**
+
+在隨機 token 組成的 5000 個 token 的「語料」裡，取一段長度 40 的 token 當題目，把正中間（第 20 個）token 換成語料裡不會出現的值 `99999`。分別用 \\( n = 13 \\)、8、5 查，印出 `contamination_rate`，再手算：為什麼是這些數字？接著對一段長度只有 20 的題目做同樣的事，\\( n = 13 \\) 的結果是多少？
+
+**練習目標**：只改一個 token，就會讓包含它的至多 \\( n \\) 個 n-gram 都查不到；題目越短、\\( n \\) 越大，剩下能偵測的越少。
+
+**批改重點**：長度 40 有 \\( 40 - n + 1 \\) 個 n-gram，包含中間那個 token 的有 \\( n \\) 個，所以比例是 \\( (28 - 13)/28 = 0.5357 \\)（\\( n = 13 \\)）、\\( 25/33 = 0.7576 \\)（\\( n = 8 \\)）、\\( 31/36 = 0.8611 \\)（\\( n = 5 \\)）。長度 20 時 \\( n = 13 \\) 只有 8 個 n-gram，每一個都包含中間那個 token，比例是 0：改一個 token 就整題逃過 13-gram 偵測。\\( n = 8 \\) 是 \\( 5/13 = 0.3846 \\)，\\( n = 5 \\) 是 \\( 11/16 = 0.6875 \\)。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.evaluation import contamination_rate, ngram_index
+
+rng = np.random.default_rng(0)
+corpus = rng.integers(0, 10000, 5000)  # 假裝這是訓練集
+for length in [40, 20]:
+    edited = corpus[1000 : 1000 + length].copy()  # 從語料裡抄一段當題目
+    edited[length // 2] = 99999  # 換掉正中間一個 token，這個值語料裡不會有
+    for n in [13, 8, 5]:
+        print(f"長度 {length}，n = {n}：{contamination_rate(edited, ngram_index(corpus, n), n):.4f}")
+```
+
 ## 第 13 章 資料：從網頁到訓練集
 
 ### 第 1 集 Common Crawl 與 WARC — 狀態：可用

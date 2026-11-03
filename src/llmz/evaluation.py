@@ -1,8 +1,10 @@
-"""評估（第 12 章）：帶 mask 的序列 log 機率、多選題評分、few-shot 提示、準確率。"""
+"""評估（第 12 章）：帶 mask 的序列 log 機率、多選題評分、few-shot 提示、準確率、exact match、LLM-as-judge、n-gram 污染偵測。"""
 
 import json
+import re
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 
@@ -100,3 +102,69 @@ def mcq_accuracy(model: nn.Module, tokenizer, items: list[dict], shots: list[dic
     predictions = predict_mcq(model, tokenizer, items, shots, normalize, sep)
     return sum(p == it["answer"] for p, it in zip(predictions, items)) / len(items)
 # ANCHOR_END: mcq_accuracy
+
+
+# ANCHOR: exact_match
+def normalize_answer(text: str) -> str:
+    """小寫、去掉標點與冠詞（a、an、the）、多個空白併成一個。"""
+    text = re.sub(r"[^\w\s]", "", text.lower())
+    return " ".join(re.sub(r"\b(a|an|the)\b", " ", text).split())
+
+
+def exact_match(prediction: str, reference: str) -> bool:
+    """正規化之後兩段文字要一模一樣。shortcut: 只收一個標準答案，有多個可接受的答案時對每一個都比，任一個對就算對。"""
+    return normalize_answer(prediction) == normalize_answer(reference)
+# ANCHOR_END: exact_match
+
+
+# ANCHOR: judge
+def judge_prompt(context: str, first: str, second: str, labels: tuple[str, str] = ("A", "B")) -> str:
+    """請評審在兩個結尾裡選一個。選項開頭帶空格，和題庫的 choices 一樣。"""
+    return f"Which ending makes more sense?\n\nStory: {context}\n{labels[0]}.{first}\n{labels[1]}.{second}\n\nAnswer:"
+
+
+def judge_once(model: nn.Module, tokenizer, context: str, first: str, second: str,
+               labels: tuple[str, str] = ("A", "B")) -> int:
+    """用模型當評審：比較它接在 "Answer:" 後面寫出哪個標籤的機率比較大。回傳 0（first）或 1（second）。"""
+    logprobs, _ = choice_logprobs(model, tokenizer, judge_prompt(context, first, second, labels), [" " + label for label in labels])
+    return pick_choice(logprobs)
+
+
+def judge_pair(model: nn.Module, tokenizer, context: str, a: str, b: str, labels: tuple[str, str] = ("A", "B")) -> int | None:
+    """a、b 各排前面問一次；兩次選的是同一個才算數（0 是 a、1 是 b），否則回傳 None。"""
+    a_first = judge_once(model, tokenizer, context, a, b, labels)
+    b_first = 1 - judge_once(model, tokenizer, context, b, a, labels)  # 換回 a、b 的編號
+    return a_first if a_first == b_first else None
+# ANCHOR_END: judge
+
+
+# ANCHOR: contamination
+_MULT = np.uint64(0x9E3779B97F4A7C15)  # 任意一個很大的奇數
+
+
+def ngram_hashes(tokens, n: int = 13) -> np.ndarray:
+    """tokens (T,) -> (T-n+1,) uint64：每個連續 n 個 token 一個雜湊值（多項式雜湊，uint64 溢位就是取 mod 2^64）。
+
+    shortcut: 用 64 位元雜湊代替 n-gram 本身，兩個不同的 n-gram 撞在一起的機率約 2^-64；要零誤判就改存原本的 token 逐一比對。
+    """
+    t = np.asarray(tokens).astype(np.uint64)
+    h = np.zeros(max(len(t) - n + 1, 0), dtype=np.uint64)
+    for i in range(n):
+        h = h * _MULT + t[i : i + len(h)]
+    return h
+
+
+def ngram_index(tokens, n: int = 13) -> np.ndarray:
+    """語料裡所有 n-gram 的雜湊，排序並去重。建一次，之後每個項目都用 searchsorted 查。"""
+    return np.unique(ngram_hashes(tokens, n))
+
+
+def contamination_rate(tokens, index: np.ndarray, n: int = 13) -> float:
+    """tokens 的 n-gram 有多少比例出現在 index 裡（0～1）。n 要和建 index 時一樣。
+    不到 n 個 token 就沒有 n-gram，無從判斷，回傳 nan（不是 0：「沒查到」和「沒辦法查」不一樣）。"""
+    grams = ngram_hashes(tokens, n)
+    if len(grams) == 0:
+        return float("nan")
+    pos = np.minimum(np.searchsorted(index, grams), len(index) - 1)
+    return float((index[pos] == grams).mean())
+# ANCHOR_END: contamination

@@ -144,6 +144,8 @@
     - [perplexity 的限制](chapter12/01_perplexity_limits.md)
     - [benchmark 與 few-shot](chapter12/02_benchmark_few_shot.md)
     - [loglikelihood 評多選題](chapter12/03_loglikelihood_mcq.md)
+    - [生成式評估與 LLM-as-judge](chapter12/04_generative_eval_llm_judge.md)
+    - [資料污染](chapter12/05_data_contamination.md)
 - [資料：從網頁到訓練集](chapter13/README.md)
     - [Common Crawl 與 WARC](chapter13/01_common_crawl_warc.md)
     - [HTML 轉文字](chapter13/02_html_to_text.md)
