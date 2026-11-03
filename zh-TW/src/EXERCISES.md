@@ -2398,3 +2398,145 @@ c = 6 * 8e9 * 15e12
 print(f"{c:.1e} FLOPs")
 print(f"{(c / 120) ** 0.5:.2e} 個參數")
 ```
+
+## 第 11 章 推論
+
+### 第 1 集 KV cache — 狀態：可用
+
+**題目**
+
+prompt 有 100 個 token，生成 156 個（剛好填滿 256 的 context）。沒有 cache、每一步重算整段時，模型一共處理幾個位置？是有 cache 時的幾倍？
+
+**練習目標**：重算的總量是等差數列的和。
+
+**批改重點**：\\( 100 + 101 + \cdots + 255 = 27690 \\) 個位置；有 cache 時 255 個（最後一個 token 不用再餵），約 109 倍。
+
+**參考答案**
+
+```python
+p, n = 100, 156
+naive = sum(range(p, p + n))
+print(naive, p + n - 1, f"{naive / (p + n - 1):.0f} 倍")
+```
+
+### 第 2 集 prefill 與 decode — 狀態：可用
+
+**題目**
+
+標準模型的一個 `Linear(512, 1344)`（float32）只算讀權重的位元組，餵進 \\( T \\) 個 token 時 arithmetic intensity 是多少？\\( T \\) 至少多大才超過 M4 Max 的平衡點 37 FLOPs/位元組？
+
+**練習目標**：intensity 約 \\( T/2 \\)，和矩陣大小無關。
+
+**批改重點**：\\( 2nT / 4n = T/2 \\)；\\( T = 1 \\) 是 0.5，\\( T \ge 74 \\) 才超過 37。
+
+**參考答案**
+
+```python
+n = 512 * 1344
+for t in [1, 64, 74, 256]:
+    print(t, 2 * n * t / (4 * n))
+```
+
+### 第 3 集 延遲與記憶體估算 — 狀態：可用
+
+**題目**
+
+用 Llama 3 8B（bfloat16）服務滿 8192 個 token 的序列。權重之外還有 16 GB 可以放 KV cache，能同時放幾條？如果它沒有用 GQA（32 個 KV head）呢？
+
+**練習目標**：KV cache 的公式與 GQA 的效果。
+
+**批改重點**：一條 1 GiB，16 GB 放得下 14 條；沒有 GQA 時一條 4 GiB，只放得下 3 條。
+
+**參考答案**
+
+```python
+kv_seq = 2 * 32 * 8 * 128 * 2 * 8192
+print(kv_seq / 2**30, "GiB")
+print(int(16e9 // kv_seq), "條（8 個 KV head）")
+print(int(16e9 // (kv_seq * 4)), "條（32 個 KV head）")
+```
+
+### 第 4 集 batching — 狀態：可用
+
+**題目**
+
+標準模型 decode 一步要讀全部權重，加上 batch 裡每條序列的 KV cache。cache 裡已有 128 個位置時，\\( B = 1 \\) 與 \\( B = 256 \\) 平均每生成一個 token 要讀多少位元組？cache 佔多少？
+
+**練習目標**：權重被 batch 分攤，cache 不會。
+
+**批改重點**：\\( B = 1 \\) 每個 token 92.88 MB，cache 只佔 2%；\\( B = 256 \\) 只要 2.45 MB，但 86% 是 cache。batch 大時瓶頸從權重移到 KV cache。
+
+**參考答案**
+
+```python
+weights = 22_696_448 * 4
+cache_seq = 2 * 4 * 16 * 32 * 4 * 128
+for b in [1, 256]:
+    per_token = (weights + b * cache_seq) / b
+    print(f"B={b}：每個 token 讀 {per_token / 1e6:.2f} MB，其中 cache 佔 {cache_seq / per_token:.0%}")
+```
+
+### 第 5 集 speculative decoding — 狀態：可用
+
+**題目**
+
+假設每個草稿 token 都以機率 \\( \alpha = 0.8 \\) 被接受（彼此獨立），每輪平均產生 \\( (1-\alpha^{k+1})/(1-\alpha) \\) 個 token；草稿模型一步的成本是目標模型的 \\( c = 0.25 \\) 倍。加速倍數約是「每輪 token 數 ÷ \\( (1 + kc) \\)」，\\( k \\) 從 1 到 8 哪一個最好？
+
+**練習目標**：\\( k \\) 太小猜得少，太大浪費在被拒絕的草稿上。
+
+**批改重點**：\\( k = 3 \\) 最好，約 1.69 倍；\\( k = 4 \\) 的 1.68 倍差不多，之後下降。
+
+**參考答案**
+
+```python
+alpha, c = 0.8, 0.25
+for k in range(1, 9):
+    tokens = (1 - alpha ** (k + 1)) / (1 - alpha)
+    print(k, f"{tokens:.2f}", f"{tokens / (1 + k * c):.2f}")
+```
+
+### 第 6 集 量化初探 — 狀態：可用
+
+**題目**
+
+做一個每列大小差到一千倍的矩陣，比較「整個矩陣只用一個縮放」與「每列一個縮放」的 int8 量化，看最小與最大那一列的相對誤差。
+
+**練習目標**：縮放的單位越大，小的值越容易被四捨五入成 0。
+
+**批改重點**：只用一個縮放時，最小那一列全部變成 0，相對誤差 1.000；每列一個縮放時兩列都在 1% 以內。提示：把矩陣 `reshape(1, -1)` 就能讓 `quantize` 只算一個縮放。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.inference import dequantize, quantize
+
+torch.manual_seed(0)
+w = torch.randn(64, 256) * torch.logspace(-3, 0, 64)[:, None]  # 每一列的大小差到一千倍
+per_tensor = quantize(w.reshape(1, -1), 8)  # 整個矩陣當成一列：只有一個縮放
+per_channel = quantize(w, 8)
+for name, (q, scale) in [("整個矩陣一個縮放", per_tensor), ("每列一個縮放", per_channel)]:
+    w_hat = dequantize(q, scale).reshape(w.shape)
+    rel = ((w_hat - w).abs().mean(dim=1) / w.abs().mean(dim=1))
+    print(f"{name}：最小那一列的相對誤差 {rel[0]:.3f}，最大那一列 {rel[-1]:.4f}")
+```
+
+### 第 7 集 MoE 與 attention 替代方案 — 狀態：可用
+
+**題目**
+
+一個像 Mixtral 8x7B 的模型：32 層、`d_model` 4096、`d_ff` 14336 的 SwiGLU 專家，每層 8 個、每個 token 用 2 個。只算專家的參數，總共多少？每個 token 用到多少？
+
+**練習目標**：MoE 的總參數與活躍參數。
+
+**批改重點**：每個專家 1.76 億；總共約 451 億，每個 token 用約 113 億。加上 attention 與 embedding，就接近 Mixtral 公布的 467 億與 129 億。
+
+**參考答案**
+
+```python
+d_model, d_ff, n_layers, n_experts, top_k = 4096, 14336, 32, 8, 2
+expert = 3 * d_model * d_ff
+print(f"每個專家 {expert:,}")
+print(f"全部專家 {expert * n_experts * n_layers / 1e9:.1f}B，每個 token 用 {expert * top_k * n_layers / 1e9:.1f}B")
+```

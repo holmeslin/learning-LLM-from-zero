@@ -126,7 +126,14 @@
     - [擬合冪律](chapter10/04_fit_power_law.md)
     - [Mac 上的迷你 scaling law](chapter10/05_mini_scaling_law.md)
     - [限制與 μP 一瞥](chapter10/06_limits_mup.md)
-- [推論]()
+- [推論](chapter11/README.md)
+    - [KV cache](chapter11/01_kv_cache.md)
+    - [prefill 與 decode](chapter11/02_prefill_decode.md)
+    - [延遲與記憶體估算](chapter11/03_latency_memory.md)
+    - [batching](chapter11/04_batching.md)
+    - [speculative decoding](chapter11/05_speculative_decoding.md)
+    - [量化初探](chapter11/06_quantization.md)
+    - [MoE 與 attention 替代方案](chapter11/07_moe_attention_alternatives.md)
 - [附錄二]()
 
 # 第三部 評估、資料與對齊
