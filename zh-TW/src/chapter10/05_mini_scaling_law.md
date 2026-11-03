@@ -14,7 +14,7 @@
 {{#include ../../../src/llmz/scaling.py:budget}}
 ```
 
-\\( N \\) 用**扣掉 embedding 表**的參數量：查表不做矩陣乘法，幾乎不花計算量；最後的 lm_head 要做矩陣乘法，所以留著。Kaplan 等人的論文就是這樣算的。
+\\( N \\) 用**扣掉 embedding 表**的參數量：查表不做矩陣乘法，幾乎不花計算量；最後的 lm_head 要做矩陣乘法，所以留著。Kaplan 等人的論文也不算 embedding 的參數。
 
 ### 五種大小、三個預算
 
