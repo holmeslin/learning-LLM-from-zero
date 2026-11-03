@@ -26,7 +26,7 @@ RMSNorm 放在子層**之前**（pre-norm），子層的輸入永遠是正規化
 {{#include ../../../src/llmz/model.py:config}}
 ```
 
-預設值就是本書的標準設定。最後四個是第 6 章消融實驗的開關，這一章保持預設不用管。
+預設值就是本書的標準設定。`norm` 到 `ffn` 這四個是第 6 章消融實驗的開關，最後的 `activation_checkpoint` 第 7 章第 6 集才會用到，這一章都保持預設不用管。
 
 ```python,ignore
 {{#include ../../../src/llmz/model.py:block}}
