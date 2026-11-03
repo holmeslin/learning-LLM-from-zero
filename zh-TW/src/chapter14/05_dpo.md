@@ -137,7 +137,7 @@ policy 還沒離開 reference 的時候，兩個 log 比值都是 0，loss 是 \
 
 和第 3 集的 `train_sft` 同一個骨架，差在：
 
-- **兩個模型**：`model` 是 policy，會被更新；`reference` 從同一個檔案載入，之後不動，只做 forward（`torch.no_grad()`），不累積梯度也不被 optimizer 更新。兩者每一步看同一批 `ids`、`mask`。
+- **兩個模型**：`model` 是 policy，會被更新；`reference` 是 `model` 起點參數的一份複製（`load_state_dict`），之後不動，只做 forward（`torch.no_grad()`），不累積梯度也不被 optimizer 更新。兩者每一步看同一批 `ids`、`mask`。
 - **資料**：`make_preferences` 的偏好對，預設只放 `color` 與 `who`（SFT 做不好的兩種）。
 - **學習率**：`5e-5` 起跳，比 SFT 的 `1e-4` 小一半。DPO 沒有「標準答案」把模型拉住，每一步都只是在調整兩個回覆的機率差；學習率大一倍，後面會看到回答整個壞掉。
 - **記錄**：`chosen_gain` 與 `rejected_gain` 是 policy 相對 reference 多給（或少給）`chosen`、`rejected` 的 log 機率；兩者的差乘上 \\( \beta \\) 就是 loss 裡的 margin。`val_preference` 是 `preference_rate`，`val_accuracy` 是 greedy 的答對比例。
