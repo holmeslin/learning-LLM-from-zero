@@ -70,8 +70,9 @@
 | 第 6 章 | 生成與實驗 | `chapter6/` |
 | 附錄一 | MLX、einops、常見錯誤、CS336 A1 對照、雲端 GPU | `appendix1/` |
 | 第 7 章 | 效能分析與記憶體 | `chapter7/` |
+| 第 8 章 | FlashAttention 的原理 | `chapter8/` |
 
-還沒寫：第二部的第 8～11 章、附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第二部的第 9～11 章、附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -183,7 +184,8 @@
 | 第 6 章 | 生成迴圈（餵最後 `context_length` 個、取最後位置 logits）、`llmz.generate`（`greedy_next`、`sample_next` 的 temperature 與 top-p（`torch.sort`／`cumsum`／`scatter`）、`generate`）、載入 `runs/base/model.pt` 生成、消融實驗的做法（1000 步縮短設定、`runs/base_1k` 基準、只改一個零件、差 0.02 內是雜訊）與結果（拿掉 RMSNorm、post-norm、NoPE、SiLU 取代 SwiGLU）、學習率掃描（三倍一格）、batch 大小（固定 token 總數）；`tools/train.py` 的 `--norm`／`--norm_position`／`--no-rope`／`--ffn`／`--d_ff`／`--lr_max`／`--batch_size` 等旗標 |
 | 附錄一 | MLX 的概念對照（不裝）、`einops` 的 `rearrange`／`reduce`／`repeat`／`einsum`（只在附錄）、常見錯誤訊息對照、CS336 A1 對照表、雲端 GPU 的流程 |
 | 第 7 章 | 記憶體階層與 M4 Max 實測頻寬（279 GB/s）與算力（10.3 TFLOPs）、`numel() * element_size()`、`llmz.profile`（`sync`、`timeit`（warmup、前後同步、取平均）、`saved_activation_bytes`（`saved_tensors_hooks`、`exclude`）、`estimate_memory`）、`torch.profiler`（`profile`、`record_function`、`key_averages().table`）、訓練記憶體四塊與 activations 的規律（跟 batch、層數成正比，attention 跟長度平方成正比）、float16／bfloat16 的範圍與精度、`torch.autocast` 與 `.float()` 算 loss、activation checkpointing（`torch.utils.checkpoint.checkpoint`、`ModelConfig(activation_checkpoint=True)`、`--activation_checkpoint`、`self.training`）、`torch.compile` 的融合原理與代價、arithmetic intensity 與 roofline |
-| 第 8 章以後 | 尚未出版 |
+| 第 8 章 | 分數矩陣 `(B, H, T, T)` 的 \\( O(T^2) \\) 記憶體（第 4 章的 attention 存約兩個分數矩陣）、分塊矩陣乘法與讀取量 \\( 2n^3/b \\)、online softmax（`m`、`l`、`acc` 與 `correction = exp(m - m_new)`、logsumexp = \\( m + \log \ell \\)）、`llmz.flash`（`flash_attention_forward`（回傳 `o` 與 `lse`、causal 跳塊與對角線遮罩、`new_zeros`／`new_full`）、`flash_attention_backward`（\\( dV, dP, dS, dQ, dK \\) 公式、\\( D = \text{rowsum}(dO \circ O) \\)、用 lse 重算 \\( P \\)）、`FlashAttention`（`torch.autograd.Function`、`ctx.save_for_backward`、`.apply`）、`flash_attention`）、backward 記憶體從平方變線性、Triton 的程式模型（只讀不跑）、`F.scaled_dot_product_attention` 的各種實作與 CPU／MPS 實測 |
+| 第 9 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -266,7 +268,14 @@
 | activation checkpointing、`activation_checkpoint` 開關 | 第 7 章第 6 集 | 不重算 |
 | `torch.compile` 的融合原理 | 第 7 章第 7 集 | 只當成 `--compile` 開關 |
 | arithmetic intensity、roofline | 第 7 章第 8 集 | 只說「矩陣乘法最花時間」 |
-| 第二部其餘內容（FlashAttention、平行化、scaling law、推論） | 第 8 章起 | 不談 |
+| 分數矩陣的 \\( O(T^2) \\) 記憶體 | 第 8 章第 1 集 | 只說「attention 分數矩陣很大」 |
+| 分塊（tiling） | 第 8 章第 2 集 | 整個矩陣一次算 |
+| online softmax | 第 8 章第 3 集 | 一次算整列 softmax |
+| `flash_attention_forward` | 第 8 章第 4 集 | 用第 4 章的 attention |
+| attention 的 backward 公式、`torch.autograd.Function`、`flash_attention` | 第 8 章第 5 集 | 交給 autograd |
+| Triton | 第 8 章第 6 集 | 不談 GPU kernel |
+| `F.scaled_dot_product_attention` 的實作選擇（只用來比較） | 第 8 章第 7 集 | 只用來驗證第 4 章的結果 |
+| 第二部其餘內容（平行化、scaling law、推論） | 第 9 章起 | 不談 |
 
 ---
 

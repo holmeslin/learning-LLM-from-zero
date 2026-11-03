@@ -1871,3 +1871,163 @@ print(f"q_proj {matmul_intensity(8192, 512, 512):.0f}")
 print(f"lm_head {matmul_intensity(8192, 512, 10000):.0f}")
 print(f"scores @ V {matmul_intensity(256, 256, 32):.0f}")
 ```
+
+## 第 8 章 FlashAttention 的原理
+
+### 第 1 集 attention 的 O(T²) 記憶體 — 狀態：可用
+
+**題目**
+
+標準模型（batch 32、16 個 head、4 層）每一層的 attention 存了約兩個分數矩陣大小的 float32 資料。長度從 256 改成 1024 時，4 層的 attention 部分合計要存幾 GB？和第 7 章第 4 集量到的整個模型 3011 MB 比較。
+
+**練習目標**：\\( B \cdot H \cdot T^2 \cdot 4 \\) 位元組，長度變 4 倍、大小變 16 倍。
+
+**批改重點**：一個分數矩陣 2.15 GB，兩個乘 4 層約 17.2 GB，光這部分就是長度 256 時整個模型 activations 的 5 倍多。
+
+**參考答案**
+
+```python
+one = 32 * 16 * 1024 * 1024 * 4
+print(one / 1e9, "GB 一個分數矩陣")
+print(2 * 4 * one / 1e9, "GB 四層")
+print(round(2 * 4 * one / 3011e6, 1), "倍")
+```
+
+### 第 2 集 tiling — 狀態：可用
+
+**題目**
+
+把正文的分塊矩陣乘法改成支援不整除的情況：`A` 是 `(10, 7)`、`B` 是 `(7, 9)`、塊大小 4，驗證結果等於 `A @ B`。
+
+**練習目標**：分塊迴圈的三層索引；切片超出範圍時自動截短。
+
+**批改重點**：三層迴圈分別走 `A` 的列、`B` 的行、相乘的維度；累加器的形狀要用實際切到的大小，不能寫死 `(b, b)`。
+
+**參考答案**
+
+```python
+import torch
+
+torch.manual_seed(0)
+A = torch.randn(10, 7)
+B = torch.randn(7, 9)
+b = 4
+C = torch.zeros(10, 9)
+for i in range(0, 10, b):
+    for j in range(0, 9, b):
+        acc = torch.zeros(A[i : i + b].shape[0], B[:, j : j + b].shape[1])
+        for t in range(0, 7, b):
+            acc += A[i : i + b, t : t + b] @ B[t : t + b, j : j + b]
+        C[i : i + b, j : j + b] = acc
+print(torch.allclose(C, A @ B, atol=1e-6))
+```
+
+### 第 3 集 online softmax — 狀態：可用
+
+**題目**
+
+用 online softmax 的方式，一次讀 3 個，算出 `[1.0, 3.0, 2.0, 6.0, 0.0, 4.0, 5.0]` 的 logsumexp（\\( m + \log \ell \\)），並用 `llmz.functional.logsumexp` 驗證。
+
+**練習目標**：只維護 `m` 和 `l` 兩個數；最大值改變時乘上 `correction`。
+
+**批改重點**：三段的最大值依序是 3、6、6；結果約 6.4578。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import logsumexp
+
+x = torch.tensor([1.0, 3.0, 2.0, 6.0, 0.0, 4.0, 5.0])
+m = torch.tensor(float("-inf"))
+l = torch.tensor(0.0)
+for start in range(0, len(x), 3):
+    s = x[start : start + 3]
+    m_new = torch.maximum(m, s.max())
+    l = l * torch.exp(m - m_new) + torch.exp(s - m_new).sum()
+    m = m_new
+print(m + torch.log(l), logsumexp(x))
+```
+
+### 第 4 集 純 PyTorch 分塊 attention forward — 狀態：可用
+
+**題目**
+
+用 `flash_attention_forward` 算長度 100 的 causal attention，分別用 `block_q=block_k=16`、`32`、`100`，確認三種結果彼此相同（`allclose`），也和第 4 章的 attention 相同。
+
+**練習目標**：塊大小只影響計算順序，不影響結果。
+
+**批改重點**：四者 `allclose`；`block=100` 時只有一塊，等於一次算完。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import causal_mask, scaled_dot_product_attention
+from llmz.flash import flash_attention_forward
+
+torch.manual_seed(0)
+q, k, v = (torch.randn(1, 2, 100, 8) for _ in range(3))
+ref = scaled_dot_product_attention(q, k, v, causal_mask(100))
+for b in [16, 32, 100]:
+    o, _ = flash_attention_forward(q, k, v, True, block_q=b, block_k=b)
+    print(b, torch.allclose(o, ref, atol=1e-5))
+```
+
+### 第 5 集 backward 與 recompute — 狀態：可用
+
+**題目**
+
+驗證 \\( D_i = \sum_j P_{ij}\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
+
+**練習目標**：理解為什麼 backward 不需要整列的 `P` 也能算 \\( D \\)。
+
+**批改重點**：`(P * dP).sum(-1)` 與 `(do * O).sum(-1)` 相等。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+
+torch.manual_seed(0)
+q, k, v, do = (torch.randn(6, 4) for _ in range(4))
+P = softmax(q @ k.T / 2)
+O = P @ v
+dP = do @ v.T
+print(torch.allclose((P * dP).sum(-1), (do * O).sum(-1), atol=1e-6))
+```
+
+### 第 6 集 Triton 一瞥 — 狀態：不出題
+
+需要 NVIDIA 顯示卡。讀者有 GPU 而且想練習時，請他照正文的 RMSNorm kernel 寫一個「每列加上 1 再乘 2」的 kernel，和 PyTorch 的 `(x + 1) * 2` 比對。
+
+### 第 7 集 `F.scaled_dot_product_attention` 現況 — 狀態：可用
+
+**題目**
+
+在 CPU 上用 `F.scaled_dot_product_attention` 和 `llmz.flash.flash_attention` 算同一組 causal attention（長度 300），對同一個 loss 做 backward，比較 `q` 的梯度是否相同。
+
+**練習目標**：內建版本只拿來驗證；`grad` 要在兩次之間清掉。
+
+**批改重點**：`allclose` 為 `True`；忘記 `q.grad = None` 會得到兩次相加的梯度。
+
+**參考答案**
+
+```python
+import torch
+import torch.nn.functional as F
+
+from llmz.flash import flash_attention
+
+torch.manual_seed(0)
+q, k, v = (torch.randn(1, 2, 300, 16, requires_grad=True) for _ in range(3))
+flash_attention(q, k, v, True).pow(2).sum().backward()
+ours = q.grad.clone()
+q.grad = None
+F.scaled_dot_product_attention(q, k, v, is_causal=True).pow(2).sum().backward()
+print(torch.allclose(ours, q.grad, atol=1e-4))
+```
