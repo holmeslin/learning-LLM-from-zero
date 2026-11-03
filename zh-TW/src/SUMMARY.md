@@ -156,6 +156,8 @@
     - [品質分類器](chapter13/07_quality_classifier.md)
     - [exact dedup](chapter13/08_exact_dedup.md)
     - [MinHash + LSH](chapter13/09_minhash_lsh.md)
+    - [組成資料管線](chapter13/10_compose_pipeline.md)
+    - [資料混合與合成資料](chapter13/11_mixing_synthetic_data.md)
 - [後訓練：SFT 與偏好學習](chapter14/README.md)
     - [base model 與指令模型](chapter14/01_base_vs_instruct.md)
     - [chat template 與 loss mask](chapter14/02_chat_template_loss_mask.md)

@@ -10,7 +10,7 @@ import re
 import string
 import zlib
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from hashlib import blake2b
 from html.parser import HTMLParser
 from itertools import combinations
@@ -544,3 +544,98 @@ def drop_near_duplicates(pages: list[Page], threshold: float = 0.8, bands: int =
             dropped.add(j)
     return [page for k, page in enumerate(pages) if k not in dropped]
 # ANCHOR_END: drop_near_duplicates
+
+
+# ANCHOR: run_pipeline
+Step = Callable[[list[Page]], list[Page]]  # 一個步驟：一批頁面進、一批頁面出；丟掉的頁面不出現，改過的頁面是新的 Page
+
+
+class StepReport(NamedTuple):
+    name: str
+    docs: int  # 這一步做完還剩幾頁
+    size: int  # 剩下的頁面，文字的大小總和（預設是字元數）
+
+
+def run_pipeline(
+    pages: list[Page], steps: list[tuple[str, Step]], size: Callable[[str], int] = len
+) -> tuple[list[Page], list[StepReport]]:
+    """依序執行每個步驟，回傳最後的頁面，與每一步之後的 StepReport（第一列是「輸入」）。
+
+    size 把一頁的文字量成一個數字；預設是字元數，要算 token 就傳 `lambda text: len(tokenizer.encode(text))`。
+    """
+    report = [StepReport("輸入", len(pages), sum(size(p.text) for p in pages))]
+    for name, step in steps:
+        pages = step(pages)
+        report.append(StepReport(name, len(pages), sum(size(p.text) for p in pages)))
+    return pages, report
+# ANCHOR_END: run_pipeline
+
+
+# ANCHOR: standard_steps
+def keep_language(model: NGramClassifier, lang: str = "en") -> Step:
+    """只留下逐行投票（predict_lines）判成 lang 的頁面。"""
+    return lambda pages: [p for p in pages if model.predict_lines(p.text) == lang]
+
+
+def keep_ascii(min_share: float = 0.9) -> Step:
+    """只留下「字母有 min_share 以上是 ASCII」的頁面（沒有字母算 0%）。
+
+    語言辨識沒有「都不是」：沒有標籤的語言（捷克文、越南文、波蘭文……）會被判成英文，它們的重音字母都不是 ASCII。
+    shortcut: 只適用要留下英文的管線；要留下別的語言，換成那個語言的文字系統。
+    """
+    def share(text: str) -> float:
+        letters = [c for c in text if c.isalpha()]
+        return sum(c.isascii() for c in letters) / max(len(letters), 1)
+
+    return lambda pages: [p for p in pages if share(p.text) >= min_share]
+
+
+def keep_gopher(pages: list[Page]) -> list[Page]:
+    """只留下通過 Gopher 全部七條規則的頁面。"""
+    return [p for p in pages if gopher_check(p.text)[0]]
+
+
+def mask_pii_pages(pages: list[Page]) -> list[Page]:
+    """每一頁的 email、IPv4、電話換成 <EMAIL>、<IP>、<PHONE>；頁數不變。"""
+    return [Page(p.url, mask_pii(p.text)[0]) for p in pages]
+# ANCHOR_END: standard_steps
+
+
+# ANCHOR: pareto_keep
+def pareto_keep(scores, alpha: float = 4.0, seed: int = 0) -> np.ndarray:
+    """GPT-3 的保留規則 `np.random.pareto(α) > 1 − document_score`，但 document_score 換成分數的名次（百分位）。
+
+    最高分是 1，最低分約 0。名次 u 的文件留下的機率是 (2 − u)^(−α)，整體約留 (1 − 2^(1−α)) / (α − 1)：α=4 約 29%，α=9 約 12%。
+    回傳每一篇留不留的 bool 陣列。只看名次，所以分類器的分數全擠在 0 附近也能用（機率擠在 0.004 附近時，α=9 只會留下 0.2%）。
+
+    shortcut: 同分的文件依原本的順序排名次；要公平就先加一點亂數打散。
+    """
+    scores = np.asarray(scores)
+    percentile = (scores.argsort(kind="stable").argsort() + 1) / max(len(scores), 1)
+    return np.random.default_rng(seed).pareto(alpha, len(scores)) > 1 - percentile
+
+
+def keep_by_quality(model: QualityClassifier, alpha: float = 4.0, seed: int = 0) -> Step:
+    """用品質分類器的分數（logit）排名次，再依 pareto_keep 隨機留下一部分頁面。"""
+    def step(pages: list[Page]) -> list[Page]:
+        keep = pareto_keep(model.score([p.text for p in pages]), alpha, seed)
+        return [p for p, k in zip(pages, keep) if k]
+
+    return step
+# ANCHOR_END: pareto_keep
+
+
+# ANCHOR: write_corpus_text
+def write_corpus_text(pages: Iterable[Page], path: str | Path, boundary: str = "<|endoftext|>") -> int:
+    """每一頁的文字後面接一行 boundary，寫成第 3 章 train.txt 的樣子（故事、<|endoftext|>、換行），回傳寫了幾頁。
+
+    頁面文字裡剛好有 boundary 這個字串時先拿掉：不然 tokenizer 會把它當成真的結束符號，文件在中間就斷了。
+    再交給第 3 章的 `tokenize_to_file`，就是第 5 章讀得進去的 uint16 token 檔。
+    """
+    n = 0
+    with open(path, "w", encoding="utf-8") as f:
+        for page in pages:
+            f.write(f"{page.text.replace(boundary, '')}\n{boundary}\n")
+            n += 1
+    return n
+# ANCHOR_END: write_corpus_text
