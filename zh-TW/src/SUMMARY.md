@@ -92,7 +92,15 @@
 
 # 第二部 系統、規模與推論
 
-- [效能分析與記憶體]()
+- [效能分析與記憶體](chapter7/README.md)
+    - [記憶體階層（GPU 與 Apple Silicon）](chapter7/01_memory_hierarchy.md)
+    - [正確計時（同步、warmup）](chapter7/02_timing.md)
+    - [`torch.profiler`](chapter7/03_profiler.md)
+    - [記憶體估算：參數、梯度、優化器狀態、activations](chapter7/04_memory_estimate.md)
+    - [混合精度 autocast](chapter7/05_autocast.md)
+    - [activation checkpointing](chapter7/06_activation_checkpointing.md)
+    - [`torch.compile`](chapter7/07_torch_compile.md)
+    - [arithmetic intensity](chapter7/08_arithmetic_intensity.md)
 - [FlashAttention 的原理]()
 - [平行化：原理與 CPU 模擬]()
 - [Scaling laws]()

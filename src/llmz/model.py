@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from llmz.attention import MultiHeadSelfAttention, RoPE
 from llmz.layers import Embedding, Identity, Linear, RMSNorm, SiLUFFN, SwiGLU
@@ -24,6 +25,7 @@ class ModelConfig:
     norm_position: str = "pre"  # "pre" 或 "post"
     rope: bool = True
     ffn: str = "swiglu"  # "swiglu" 或 "silu"
+    activation_checkpoint: bool = False  # 第 7 章第 6 集：activation checkpointing
 # ANCHOR_END: config
 
 
@@ -71,6 +73,9 @@ class TransformerLM(nn.Module):
     def forward(self, ids: Tensor) -> Tensor:
         x = self.embed(ids)
         for block in self.blocks:
-            x = block(x)
+            if self.cfg.activation_checkpoint and self.training:
+                x = checkpoint(block, x, use_reentrant=False)  # 第 7 章第 6 集：不存中間結果，backward 時重算
+            else:
+                x = block(x)
         return self.lm_head(self.norm_final(x))
 # ANCHOR_END: lm

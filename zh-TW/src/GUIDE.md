@@ -69,8 +69,9 @@
 | 第 5 章 | 訓練 | `chapter5/` |
 | 第 6 章 | 生成與實驗 | `chapter6/` |
 | 附錄一 | MLX、einops、常見錯誤、CS336 A1 對照、雲端 GPU | `appendix1/` |
+| 第 7 章 | 效能分析與記憶體 | `chapter7/` |
 
-還沒寫：第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第二部的第 8～11 章、附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -181,7 +182,8 @@
 | 第 5 章 | 語言模型 loss 的對齊與初始值 ≈ ln V、`torch.optim.Optimizer` 基底（`param_groups`、`state`、`@torch.no_grad()` 裝飾器）、`llmz.optim`（`SGD`、`AdamW`（m／v／偏差修正／decoupled weight decay、預設 betas (0.9, 0.95)、wd 0.1）、`lr_cosine_schedule`（warmup 200、1e-3 → 1e-4、5000 步）、`clip_grad_norm_`（max_norm 1.0））、`mul_`／`add_` 就地運算、`get_batch`（`torch.randint` 起點、memmap 切片、int64）、`llmz.train`（`TrainConfig`、`save_checkpoint`／`load_checkpoint`、`evaluate`、`train`、JSONL log、`latest.pt` 自動接續、smoke 設定）、`model.eval()`／`train()`、`tools/train.py` 命令列與 `--compile`、MPS 實測（CPU 2.4 s／MPS 0.44 s／compile 0.28 s 一步，5.5 GB）、沒有 TF32、`torch.mps.synchronize()`、完整訓練的結果與 `tools/plot_loss.py` |
 | 第 6 章 | 生成迴圈（餵最後 `context_length` 個、取最後位置 logits）、`llmz.generate`（`greedy_next`、`sample_next` 的 temperature 與 top-p（`torch.sort`／`cumsum`／`scatter`）、`generate`）、載入 `runs/base/model.pt` 生成、消融實驗的做法（1000 步縮短設定、`runs/base_1k` 基準、只改一個零件、差 0.02 內是雜訊）與結果（拿掉 RMSNorm、post-norm、NoPE、SiLU 取代 SwiGLU）、學習率掃描（三倍一格）、batch 大小（固定 token 總數）；`tools/train.py` 的 `--norm`／`--norm_position`／`--no-rope`／`--ffn`／`--d_ff`／`--lr_max`／`--batch_size` 等旗標 |
 | 附錄一 | MLX 的概念對照（不裝）、`einops` 的 `rearrange`／`reduce`／`repeat`／`einsum`（只在附錄）、常見錯誤訊息對照、CS336 A1 對照表、雲端 GPU 的流程 |
-| 第 7 章以後 | 尚未出版 |
+| 第 7 章 | 記憶體階層與 M4 Max 實測頻寬（279 GB/s）與算力（10.3 TFLOPs）、`numel() * element_size()`、`llmz.profile`（`sync`、`timeit`（warmup、前後同步、取平均）、`saved_activation_bytes`（`saved_tensors_hooks`、`exclude`）、`estimate_memory`）、`torch.profiler`（`profile`、`record_function`、`key_averages().table`）、訓練記憶體四塊與 activations 的規律（跟 batch、層數成正比，attention 跟長度平方成正比）、float16／bfloat16 的範圍與精度、`torch.autocast` 與 `.float()` 算 loss、activation checkpointing（`torch.utils.checkpoint.checkpoint`、`ModelConfig(activation_checkpoint=True)`、`--activation_checkpoint`、`self.training`）、`torch.compile` 的融合原理與代價、arithmetic intensity 與 roofline |
+| 第 8 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -257,7 +259,14 @@
 | 消融實驗、`--norm`／`--norm_position`／`--no-rope`／`--ffn` 旗標 | 第 6 章第 5～8 集 | 只跑標準設定 |
 | 學習率掃描、batch 大小實驗 | 第 6 章第 9、10 集 | 用預設值 |
 | `einops` | 附錄一 b | 用 `reshape`／`transpose`／`einsum` |
-| 第二部內容（效能分析、FlashAttention、平行化、scaling law、推論） | 第 7 章起 | 不談 |
+| 計時要同步與 warmup、`llmz.profile.sync`／`timeit` | 第 7 章第 2 集 | 用 `time.perf_counter()` 直接量 |
+| `torch.profiler` | 第 7 章第 3 集 | 用 `timeit` 一段段量 |
+| `saved_activation_bytes`、`estimate_memory`、activations 的估算 | 第 7 章第 4 集 | 只算參數、梯度、優化器狀態 |
+| float16／bfloat16、`torch.autocast` | 第 7 章第 5 集 | 全部 float32 |
+| activation checkpointing、`activation_checkpoint` 開關 | 第 7 章第 6 集 | 不重算 |
+| `torch.compile` 的融合原理 | 第 7 章第 7 集 | 只當成 `--compile` 開關 |
+| arithmetic intensity、roofline | 第 7 章第 8 集 | 只說「矩陣乘法最花時間」 |
+| 第二部其餘內容（FlashAttention、平行化、scaling law、推論） | 第 8 章起 | 不談 |
 
 ---
 

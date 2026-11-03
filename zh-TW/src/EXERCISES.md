@@ -1695,3 +1695,179 @@ torch.ones(2, requires_grad=True).backward()
 ### e 雲端 GPU 租用 — 狀態：不出題
 
 流程說明，無法在本機練習。
+
+## 第 7 章 效能分析與記憶體
+
+### 第 1 集 記憶體階層 — 狀態：可用
+
+**題目**
+
+標準模型最後輸出的 logits 形狀是 `(32, 256, 10000)`、float32。不建立這個張量，算出它佔幾 MB，以及它是每一層進出的 `(32, 256, 512)` 張量的幾倍。
+
+**練習目標**：位元組數 = 元素個數 × 每個元素的大小。
+
+**批改重點**：327.68 MB；約 19.5 倍（就是 10000 / 512）。
+
+**參考答案**
+
+```python
+logits_bytes = 32 * 256 * 10000 * 4
+hidden_bytes = 32 * 256 * 512 * 4
+print(logits_bytes / 1e6, "MB")
+print(round(logits_bytes / hidden_bytes, 1))
+```
+
+### 第 2 集 正確計時 — 狀態：可用
+
+**題目**
+
+在 CPU 上用 `llmz.profile.timeit` 量 256 × 256 與 1024 × 1024 的矩陣乘法，印出每次的毫秒數與 GFLOPs。哪一個的 GFLOPs 比較高？
+
+**練習目標**：用 `lambda` 包住要量的程式；FLOPs 公式 \\( 2n^3 \\)。
+
+**批改重點**：時間每台機器不同。哪個 GFLOPs 高也不一定：大矩陣把固定開銷攤掉了，但 CPU 上小矩陣可能整個放進快取。重點是會用 `timeit` 與 \\( 2n^3 \\)。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.profile import timeit
+
+device = torch.device("cpu")
+for n in [256, 1024]:
+    a = torch.randn(n, n)
+    b = torch.randn(n, n)
+    seconds = timeit(lambda: a @ b, device, warmup=2, repeat=10)
+    print(n, f"{seconds * 1000:.3f} ms", f"{2 * n**3 / seconds / 1e9:.1f} GFLOPs")
+```
+
+### 第 3 集 `torch.profiler` — 狀態：可用
+
+**題目**
+
+用 `torch.profiler` 剖析 `llmz.layers.RMSNorm(512)` 對 `torch.randn(8, 128, 512)` 的 forward，印出統計表。表裡出現了哪幾種 `aten::` 運算？對照 `RMSNorm.forward` 的程式碼，各是哪一行做的？
+
+**練習目標**：讀 profiler 的表；一行 Python 對應一到多個底層運算。
+
+**批改重點**：主要是 `aten::mul` 兩次（平方、乘 weight）、`aten::mean`（裡面再呼叫 `sum` 與 `div_`）、`aten::add`（加 eps）、`aten::sqrt`、`aten::div`（`x / rms`）；另外有 `aten::to`、`copy_`、`empty` 之類的小運算，時間可以忽略。
+
+**參考答案**
+
+```python
+import torch
+from torch.profiler import ProfilerActivity, profile
+
+from llmz.layers import RMSNorm
+
+norm = RMSNorm(512)
+x = torch.randn(8, 128, 512)
+with torch.no_grad(), profile(activities=[ProfilerActivity.CPU]) as prof:
+    norm(x)
+print(prof.key_averages().table(sort_by="self_cpu_time_total", max_name_column_width=14))
+```
+
+### 第 4 集 記憶體估算 — 狀態：可用
+
+**題目**
+
+一個 1.24 億參數的模型用 AdamW 訓練，參數、梯度、優化器狀態共要幾 GB？再用 `saved_activation_bytes` 量 `llmz.layers.SwiGLU(512, 1344)` 對 `torch.randn(4, 256, 512)` 的 forward 存了幾 MB（排除參數），並說明大約是幾個 `(4, 256, 1344)` 張量的大小。
+
+**練習目標**：`estimate_memory` 與 `saved_activation_bytes(fn, exclude=...)` 的用法。
+
+**批改重點**：1.984 GB；SwiGLU 存了 29.6 MB，約 5.4 個 `(4, 256, 1344)` 張量（每個 5.5 MB）：w1、w3 的輸出、silu 的中間結果與相乘的結果，再加上輸入（2.1 MB）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import SwiGLU
+from llmz.profile import estimate_memory, saved_activation_bytes
+
+print(sum(estimate_memory(124_000_000).values()) / 1e9, "GB")
+torch.manual_seed(0)
+ffn = SwiGLU(512, 1344)
+x = torch.randn(4, 256, 512)
+saved = saved_activation_bytes(lambda: ffn(x).sum(), exclude=ffn.parameters())
+print(saved / 1e6, "MB")
+print(saved / (4 * 256 * 1344 * 4))
+```
+
+### 第 5 集 混合精度 autocast — 狀態：可用
+
+**題目**
+
+把 256、257、258、259 轉成 bfloat16 再轉回來，印出結果。為什麼 257 變了？再用 float16 試一次。
+
+**練習目標**：bfloat16 只有 7 位元尾數，256 到 512 之間只能表示偶數。
+
+**批改重點**：bfloat16 得到 256、256、258、260（257、259 捨入到最近的偶數）；float16 四個都不變。
+
+**參考答案**
+
+```python
+import torch
+
+values = torch.tensor([256.0, 257.0, 258.0, 259.0])
+print(values.to(torch.bfloat16).float())
+print(values.to(torch.float16).float())
+```
+
+### 第 6 集 activation checkpointing — 狀態：可用
+
+**題目**
+
+用 `ModelConfig(vocab_size=100, context_length=32, d_model=64, n_layers=n, n_heads=4, d_ff=172)`，batch 8，量 `n_layers` 為 2 與 6 時、開與不開 `activation_checkpoint` 的 activations 位元組數（排除參數）。checkpoint 之後每多一層多了幾位元組？和每一層的輸入大小比一比。
+
+**練習目標**：checkpoint 之後每層只存輸入。
+
+**批改重點**：開了 checkpoint，6 層減 2 層的差除以 4 正好是一個 `(8, 32, 64)` float32 張量，65536 位元組。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import cross_entropy
+from llmz.model import ModelConfig, TransformerLM
+from llmz.profile import saved_activation_bytes
+
+x = torch.randint(0, 100, (8, 33))
+result = {}
+for n in [2, 6]:
+    for flag in [False, True]:
+        torch.manual_seed(0)
+        model = TransformerLM(ModelConfig(vocab_size=100, context_length=32, d_model=64, n_layers=n,
+                                          n_heads=4, d_ff=172, activation_checkpoint=flag))
+        fn = lambda: cross_entropy(model(x[:, :-1]).reshape(-1, 100), x[:, 1:].reshape(-1))
+        result[n, flag] = saved_activation_bytes(fn, exclude=model.parameters())
+print(result)
+print((result[6, True] - result[2, True]) / 4, 8 * 32 * 64 * 4)
+```
+
+### 第 7 集 `torch.compile` — 狀態：不出題
+
+實測需要 MPS 或 CUDA，CPU 上編譯又慢又不具代表性。讀者想練習時，請他照正文在自己的 Mac 上量 RMSNorm 的 eager 與 compiled，並用第 1 集的頻寬算出「搬幾趟」對不對得上。
+
+### 第 8 集 arithmetic intensity — 狀態：可用
+
+**題目**
+
+算標準模型裡三個運算的 arithmetic intensity（float32）：`q_proj`（`(8192, 512) @ (512, 512)`）、`lm_head`（`(8192, 512) @ (512, 10000)`）、attention 的「分數 @ V」（一個 head，`(256, 256) @ (256, 32)`）。哪個在 M4 Max 上（分界點 37）卡在記憶體？
+
+**練習目標**：intensity = FLOPs ÷ 讀寫位元組。
+
+**批改重點**：約 124、230、13；分數 @ V 卡在記憶體，因為要讀整個 256 × 256 的分數矩陣，卻只輸出 32 維。
+
+**參考答案**
+
+```python
+def matmul_intensity(m, k, n, bytes_per=4):
+    return 2 * m * k * n / ((m * k + k * n + m * n) * bytes_per)
+
+
+print(f"q_proj {matmul_intensity(8192, 512, 512):.0f}")
+print(f"lm_head {matmul_intensity(8192, 512, 10000):.0f}")
+print(f"scores @ V {matmul_intensity(256, 256, 32):.0f}")
+```
