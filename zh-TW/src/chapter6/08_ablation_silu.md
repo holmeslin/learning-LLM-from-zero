@@ -16,13 +16,16 @@ uv run tools/train.py --out_dir runs/silu --compile --max_steps 1000 --eval_ever
 
 ### 結果
 
-TBD_TABLE_SILU
+| run | FFN 參數（每層） | 第 200 步驗證 loss | 第 1000 步驗證 loss |
+| --- | --- | --- | --- |
+| SwiGLU，`d_ff` 1344（基準） | 2,064,384 | 3.08 | **2.17** |
+| SiLU，`d_ff` 2048 | 2,097,152 | 3.19 | 2.27 |
 
 ![SwiGLU 與 SiLU](images/ablation_silu.png)
 
-TBD_TEXT_SILU
+參數量幾乎相同（SiLU 版還多 1.6%），SwiGLU 低了 0.10，超過雜訊的範圍。gate 讓模型能逐維度決定「這一維要放多少資訊通過」，同樣的參數用得更有效率。這也是為什麼現在的 LLM 幾乎都用 GLU 家族的 FFN。
 
 ## 重點整理
 
 - 比較不同結構時先把參數量對齊：SiLU FFN 用 \\( d_{\text{ff}} = 4d \\)，SwiGLU 用 \\( 8d/3 \\)。
-- TBD_SUMMARY_SILU
+- 參數量對齊後，SwiGLU 比沒有 gate 的 SiLU FFN 低 0.10（2.17 對 2.27）。

@@ -18,14 +18,19 @@ uv run tools/train.py --out_dir runs/nope --compile --max_steps 1000 --eval_ever
 
 ### 結果
 
-TBD_TABLE_NOPE
+| run | 第 200 步驗證 loss | 第 500 步 | 第 1000 步 |
+| --- | --- | --- | --- |
+| RoPE（基準） | 3.08 | 2.44 | **2.17** |
+| NoPE | 3.52 | 2.75 | 2.36 |
 
 ![RoPE 與 NoPE](images/ablation_nope.png)
 
-TBD_TEXT_NOPE
+NoPE 學得起來，但每個時間點都落後一截，1000 步時差 0.19，是本章四個零件消融裡差距最大的。前 200 步的差距（0.44）比最後還大：一開始模型要學的就是「前一個字是什麼」這種短距離的規律，沒有位置資訊時最吃虧。
+
+照第 5 集的標準，0.19 遠超過雜訊，可以放心說：在這個設定下 RoPE 很值得。
 
 ## 重點整理
 
 - NoPE 靠 causal mask 間接得到粗略的位置資訊，所以不會完全失敗。
-- TBD_SUMMARY_NOPE
+- NoPE 1000 步驗證 loss 2.36，比 RoPE 差 0.19，而且前期差更多。
 - RoPE 不增加參數，只是幾個 cos、sin 的乘法，是最划算的零件之一。

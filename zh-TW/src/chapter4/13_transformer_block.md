@@ -16,7 +16,7 @@ Block 不是 `x → attention → FFN`，而是：
 
 ### pre-norm
 
-RMSNorm 放在子層**之前**（pre-norm），子層的輸入永遠是正規化過的；殘差那條路上完全沒有 norm，從第一層到最後一層是乾淨的加法。早期的 Transformer 把 norm 放在相加**之後**（post-norm），訓練起來不穩、需要很小心地調學習率，現在幾乎都改成 pre-norm，第 6 章第 6 集會比較。
+RMSNorm 放在子層**之前**（pre-norm），子層的輸入永遠是正規化過的；殘差那條路上完全沒有 norm，從第一層到最後一層是乾淨的加法。早期的 Transformer 把 norm 放在相加**之後**（post-norm），層數一多就訓練不穩、需要很小心地調 warmup 與學習率，現在幾乎都改成 pre-norm。第 6 章第 6 集會在本書的 4 層模型上比較，結果可能和你預期的不一樣。
 
 ### 設定與程式
 
@@ -69,5 +69,5 @@ torch.Size([2, 10, 32])
 
 - Block：`x = x + attn(norm(x))`，`x = x + ffn(norm(x))`。
 - 殘差連接讓梯度有直通的路，深模型才訓練得動。
-- pre-norm：norm 在子層之前，殘差路上沒有 norm；比 post-norm 穩。
+- pre-norm：norm 在子層之前，殘差路上沒有 norm；深的模型比 post-norm 穩。
 - `ModelConfig` 集中所有尺寸，預設是標準設定；`TransformerBlock(cfg, rope)` 的參數 \\( 4d^2 + 3 d \cdot d_{\text{ff}} + 2d \\)。
