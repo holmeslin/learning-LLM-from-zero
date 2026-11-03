@@ -2262,3 +2262,139 @@ bandwidth = 0.5e9
 print(f"{flops / (0.75 * bandwidth):,.0f} 個 token")
 print(32 * 256, "個 token（第 5 章一步）")
 ```
+
+## 第 10 章 Scaling laws
+
+### 第 1 集 什麼是 scaling law — 狀態：可用
+
+**題目**
+
+用 Kaplan 的 \\( L(N) = (N_c/N)^{0.076} \\)（\\( N_c = 8.8 \times 10^{13} \\)），算出 loss 從 3.0 降到 2.5，參數量要變成幾倍。
+
+**練習目標**：冪律的比例只和 loss 的比值有關。
+
+**批改重點**：\\( N_2 / N_1 = (L_1 / L_2)^{1/0.076} = 1.2^{13.16} \approx 11 \\) 倍；和 \\( N_c \\) 無關。
+
+**參考答案**
+
+```python
+alpha, n_c = 0.076, 8.8e13
+n1 = n_c / 3.0 ** (1 / alpha)
+n2 = n_c / 2.5 ** (1 / alpha)
+print(f"{n1:.2e} → {n2:.2e}，{n2 / n1:.1f} 倍")
+```
+
+### 第 2 集 Chinchilla 與 IsoFLOPs — 狀態：可用
+
+**題目**
+
+用 `chinchilla_loss`，比較同樣 \\( 10^{23} \\) FLOPs 下兩種分配：100 億參數，以及 1000 億參數。各看幾個 token？哪一個 loss 比較低？
+
+**練習目標**：\\( D = C / (6N) \\)；預算固定時大模型不一定比較好。
+
+**批改重點**：100 億參數看約 1.7 兆個 token、1000 億參數只看約 1700 億個；100 億的 loss 較低。
+
+**參考答案**
+
+```python
+from llmz.scaling import chinchilla_loss
+
+c = 1e23
+for n in [1e10, 1e11]:
+    d = c / (6 * n)
+    print(f"N = {n:.0e}  D = {d:.2e}  loss = {chinchilla_loss(n, d):.4f}")
+```
+
+### 第 3 集 擬合 IsoFLOPs 曲線 — 狀態：可用
+
+**題目**
+
+故意把掃描範圍放偏：\\( C = 10^{20} \\)，參數量只掃 \\( 10^{7} \\) 到 \\( 10^{8} \\) 的 9 個點（沒有雜訊）。用 `fit_isoflop_minimum` 擬合，和真正的最佳值（約 \\( 6.45 \times 10^8 \\)）比較，說明發生了什麼事。
+
+**練習目標**：最低點落在掃描範圍外時，拋物線外推不可靠。
+
+**批改重點**：9 個點的 loss 一路往下，最小的是範圍邊上的 \\( 10^8 \\)；拋物線的頂點約 \\( 2.9 \times 10^8 \\)，落在範圍外，和真正答案差了一倍多。正確的做法是往大的方向多掃幾個點。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import chinchilla_loss, fit_isoflop_minimum
+
+c = 1e20
+n = np.logspace(7, 8, 9)
+loss = chinchilla_loss(n, c / (6 * n))
+print(np.round(loss, 4))
+print(f"{fit_isoflop_minimum(n, loss):.2e}")
+```
+
+### 第 4 集 擬合冪律 — 狀態：可用
+
+**題目**
+
+不加雜訊，對 \\( 10^{18} \\) 到 \\( 10^{22} \\) 五個預算各用 `chinchilla_loss` 在密的格點上找到最佳 \\( N \\)，再用 `fit_power_law` 擬合指數，和 \\( \beta/(\alpha+\beta) \\) 比較。
+
+**練習目標**：沒有雜訊時，擬合應該幾乎完全吻合推導。
+
+**批改重點**：擬合出 0.4516，和 \\( 0.28 / 0.62 = 0.4516 \\) 一致到小數第四位。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import chinchilla_loss, fit_power_law
+
+budgets = np.array([1e18, 1e19, 1e20, 1e21, 1e22])
+grid = np.logspace(6, 12, 20000)
+best = [grid[np.argmin(chinchilla_loss(grid, c / (6 * grid)))] for c in budgets]
+k, a = fit_power_law(budgets, np.array(best))
+print(f"{a:.4f}", f"{0.28 / 0.62:.4f}")
+```
+
+### 第 5 集 Mac 上的迷你 scaling law — 狀態：可用
+
+**題目**
+
+用本集的結果表，把 \\( 3 \times 10^{14} \\) 的 d64 拿掉（只剩四個點）重新擬合。這個預算的最佳參數量、以及三個預算擬合出來的指數各變了多少？
+
+**練習目標**：體會少數幾個點的擬合對單一資料點有多敏感。
+
+**批改重點**：\\( 3 \times 10^{14} \\) 的頂點從 \\( 3.20 \times 10^6 \\) 移到 \\( 3.87 \times 10^6 \\)，差了兩成；指數只從 0.436 變成 0.434，因為三個點的直線主要由兩端的預算決定。中間的點不穩，指數看起來卻很穩，不代表指數可靠。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import fit_isoflop_minimum, fit_power_law
+
+n = {"d64": 746_816, "d128": 1_657_472, "d192": 3_248_448, "d256": 5_773_568, "d384": 14_461_824}
+results = {
+    1e14: {"d64": 2.6687, "d128": 2.5633, "d192": 2.5516, "d256": 2.7142},
+    3e14: {"d128": 2.2566, "d192": 2.1331, "d256": 2.1350, "d384": 2.4697},
+    1e15: {"d128": 2.0080, "d192": 1.8694, "d256": 1.8375, "d384": 1.9577},
+}
+best = [fit_isoflop_minimum([n[k] for k in losses], list(losses.values())) for losses in results.values()]
+k, a = fit_power_law(np.array(list(results)), np.array(best))
+print(f"{best[1]:.2e}", f"{a:.3f}")
+```
+
+### 第 6 集 限制與 μP 一瞥 — 狀態：可用
+
+**題目**
+
+Llama 3 8B 用了約 15 兆個 token 訓練。用 \\( C = 6ND \\) 算它的訓練計算量；如果改成每個參數 20 個 token 的 Chinchilla 最佳分配，同樣的計算量可以訓練多大的模型？
+
+**練習目標**：\\( C = 6ND \\) 與 \\( D = 20N \\) 聯立。
+
+**批改重點**：\\( C \approx 7.2 \times 10^{23} \\)；\\( 120 N^2 = C \\)，\\( N \approx 775 \\) 億。Meta 選擇了小得多的模型，換取推論便宜。
+
+**參考答案**
+
+```python
+c = 6 * 8e9 * 15e12
+print(f"{c:.1e} FLOPs")
+print(f"{(c / 120) ** 0.5:.2e} 個參數")
+```
