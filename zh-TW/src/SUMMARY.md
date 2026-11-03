@@ -156,6 +156,8 @@
     - [品質分類器](chapter13/07_quality_classifier.md)
     - [exact dedup](chapter13/08_exact_dedup.md)
     - [MinHash + LSH](chapter13/09_minhash_lsh.md)
+    - [組成資料管線](chapter13/10_compose_pipeline.md)
+    - [資料混合與合成資料](chapter13/11_mixing_synthetic_data.md)
 - [後訓練：SFT 與偏好學習]()
 - [後訓練：RL 與可驗證獎勵](chapter15/README.md)
     - [policy gradient 直覺](chapter15/01_policy_gradient_intuition.md)

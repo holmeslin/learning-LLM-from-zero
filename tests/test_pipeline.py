@@ -1,4 +1,5 @@
 import gzip
+import math
 import random
 
 import numpy as np
@@ -6,9 +7,12 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from llmz.data import get_batch, load_tokens, tokenize_to_file
+from llmz.model import ModelConfig
 from llmz.pipeline import (
     Page,
     QualityClassifier,
+    StepReport,
     binary_cross_entropy,
     count_lines,
     decode_html,
@@ -20,17 +24,30 @@ from llmz.pipeline import (
     iter_pages,
     iter_warc_records,
     jaccard,
+    keep_ascii,
+    keep_by_quality,
+    keep_gopher,
+    keep_language,
     line_hash,
     lsh_candidates,
     lsh_probability,
+    mask_pii_pages,
     minhash_signature,
+    pareto_keep,
     read_pages,
+    run_pipeline,
     shingles,
     split_http_response,
+    train_langid,
     train_quality,
     verify_pairs,
+    write_corpus_text,
     write_pages,
 )
+from llmz.tokenizer import Tokenizer, base_vocab
+from llmz.train import TrainConfig, train
+
+EOT = "<|endoftext|>"
 
 
 def warc_record(warc_type: str, body: bytes, **headers: str) -> bytes:
@@ -488,3 +505,125 @@ def test_drop_near_duplicates_threshold_and_chains():
     c = Page("c", " ".join(c_words))
     assert [p.url for p in drop_near_duplicates([a, b, c], threshold=0.9)] == ["a"]  # 三份兩兩 Jaccard 都 > 0.9
     assert [p.url for p in drop_near_duplicates([a, b, c], threshold=0.97)] == ["a", "c"]  # b 與 a 太像被丟掉；c 與 a 的 Jaccard 低於門檻，留下
+
+
+def test_run_pipeline_reports_every_step_in_order():
+    pages = [Page("a", "one two three"), Page("b", "four five"), Page("c", "six")]
+    drop_short = lambda ps: [p for p in ps if len(p.text.split()) > 1]
+    shout = lambda ps: [Page(p.url, p.text.upper()) for p in ps]
+    kept, report = run_pipeline(pages, [("太短的丟掉", drop_short), ("大寫", shout)])
+    assert kept == [Page("a", "ONE TWO THREE"), Page("b", "FOUR FIVE")]
+    assert report == [StepReport("輸入", 3, 25), StepReport("太短的丟掉", 2, 22), StepReport("大寫", 2, 22)]  # 預設的大小是字元數
+    _, report = run_pipeline(pages, [("太短的丟掉", drop_short)], size=lambda text: len(text.split()))
+    assert [(r.docs, r.size) for r in report] == [(3, 6), (2, 5)]  # size 可以換成別的量法，例如 token 數
+    assert run_pipeline([], [("x", drop_short)])[1] == [StepReport("輸入", 0, 0), StepReport("x", 0, 0)]
+
+
+EN_PARAGRAPH = (
+    "The old library at the end of the street has a small reading room with a large window that faces the garden. "
+    "Every morning the librarian opens the door and sets out the newspapers, and a few regular visitors come in to read "
+    "while the kettle warms in the corner. People have said that the room is the quietest place in town, and nobody "
+    "wants to change that. On rainy days the children come with their parents to borrow picture books and to listen to "
+    "a story that the librarian reads aloud with a different voice for every character."
+)
+DE_PARAGRAPH = (
+    "Die alte Bibliothek am Ende der Straße hat einen kleinen Lesesaal mit einem großen Fenster, das zum Garten zeigt. "
+    "Jeden Morgen öffnet die Bibliothekarin die Tür und legt die Zeitungen aus, und einige Stammgäste kommen herein, "
+    "um zu lesen, während das Wasser in der Ecke warm wird. Man sagt, dass der Raum der ruhigste Ort der Stadt ist, "
+    "und niemand möchte das ändern. An regnerischen Tagen kommen die Kinder mit ihren Eltern, um Bilderbücher zu leihen."
+)
+
+
+def test_standard_steps_filter_and_mask_in_pipeline_order():
+    pages = [
+        Page("en", EN_PARAGRAPH),
+        Page("de", DE_PARAGRAPH),
+        Page("short", "Home | About | Contact"),
+        Page("mail", EN_PARAGRAPH + " Write to Mia at mia@example.com for a card."),
+    ]
+    steps = [("語言", keep_language(train_langid())), ("Gopher", keep_gopher), ("PII", mask_pii_pages)]
+    kept, report = run_pipeline(pages, steps)
+    assert [(r.name, r.docs) for r in report] == [("輸入", 4), ("語言", 3), ("Gopher", 2), ("PII", 2)]  # 德文、導覽列各被一步擋下
+    assert [p.url for p in kept] == ["en", "mail"]
+    assert kept[1].text.endswith("Write to Mia at <EMAIL> for a card.")
+    assert keep_language(train_langid(), "de")(pages)[0].url == "de"
+
+
+def test_pareto_keep_depends_on_rank_and_seed_only():
+    scores = np.random.default_rng(0).normal(size=1000)
+    keep = pareto_keep(scores, alpha=4, seed=3)
+    assert keep.dtype == bool and keep.shape == (1000,)
+    assert keep[scores.argmax()]  # 名次最高的百分位是 1，門檻 1 - 1 = 0，Pareto 的樣本一定大於 0
+    assert (keep == pareto_keep(scores, alpha=4, seed=3)).all()  # 同樣的種子，同樣的結果
+    assert (keep != pareto_keep(scores, alpha=4, seed=4)).any()
+    assert (keep == pareto_keep(np.exp(scores) * 100 - 7, alpha=4, seed=3)).all()  # 分數的單位、平移都不影響，只看名次
+    assert (keep == pareto_keep(torch.tensor(scores), alpha=4, seed=3)).all()  # score() 回傳的是 tensor
+    assert pareto_keep([], alpha=4).shape == (0,)
+
+
+@pytest.mark.parametrize("alpha", [2.0, 4.0, 9.0])
+def test_pareto_keep_matches_the_exact_keep_probability(alpha):
+    # 百分位 u 的文件留下的機率是 P(X > 1 - u) = (2 - u)^(-alpha)；在 [a, b] 區間裡取平均要積分：
+    def mean_keep(a, b):
+        return ((2 - b) ** (1 - alpha) - (2 - a) ** (1 - alpha)) / ((alpha - 1) * (b - a))
+
+    n = 200_000
+    keep = pareto_keep(np.arange(n), alpha=alpha, seed=0)
+    for a, b in [(0, 1), (0, 0.1), (0.45, 0.55), (0.9, 1)]:  # 全部、最低的 10%、中間、最高的 10%
+        got = keep[int(a * n) : int(b * n)].mean()
+        assert got == pytest.approx(mean_keep(a, b), abs=0.015), (alpha, a, b)  # 每一段約 2 萬篇，抽樣的標準差 0.003
+    assert mean_keep(0, 1) == pytest.approx((1 - 2 ** (1 - alpha)) / (alpha - 1))  # 整體留下的比例：alpha=4 約 29%、alpha=9 約 12%
+
+
+def test_keep_by_quality_prefers_high_scoring_pages():
+    texts, labels = toy_texts(0, 200)
+    model, _ = train_quality(texts, labels, n_buckets=1 << 12, steps=60, batch_size=16, lr=0.1)
+    test_texts, test_labels = toy_texts(1, 400)
+    pages = [Page(str(i), t) for i, t in enumerate(test_texts)]
+    kept = keep_by_quality(model, alpha=4, seed=0)(pages)
+    kept_labels = [test_labels[int(p.url)] for p in kept]
+    assert 0.2 < len(kept) / len(pages) < 0.4  # alpha=4 留下約 29%
+    assert 0.7 < sum(kept_labels) / len(kept) < 0.9  # 完全分得開時，好的占 0.47 / (0.47 + 0.11) = 80%：大部分是好的，分數低的也有機會
+    assert keep_by_quality(model)([]) == []
+
+
+def byte_tokenizer() -> Tokenizer:
+    """測試用：沒有任何 merge 的 tokenizer，每個 byte 一個 token，<|endoftext|> 是 256。"""
+    return Tokenizer(base_vocab([EOT]), [], [EOT])
+
+
+def test_write_corpus_text_then_chapter3_tokenize_gives_a_loadable_token_file(tmp_path):
+    pages = [Page("a", "first page\nsecond line"), Page("b", f"oops {EOT} inside"), Page("c", "last")]
+    assert write_corpus_text(pages, tmp_path / "web.txt") == 3
+    n_tokens = tokenize_to_file(byte_tokenizer(), tmp_path / "web.txt", tmp_path / "web.bin")
+    data = load_tokens(tmp_path / "web.bin")
+    assert data.dtype == np.uint16 and len(data) == n_tokens
+    assert (data == 256).sum() == 3  # 一頁一個結束符號；頁面文字裡原本就有的那一個被拿掉了，不會讓文件提早結束
+    assert byte_tokenizer().decode(data.tolist()) == (
+        f"first page\nsecond line\n{EOT}\noops  inside\n{EOT}\nlast\n{EOT}\n"
+    )  # 跟第 3 章的 train.txt 同一個樣子：文件、結束符號、換行
+    x, y = get_batch(data, 4, 8, torch.device("cpu"))
+    assert x.shape == y.shape == (4, 8) and (x[:, 1:] == y[:, :-1]).all()  # 第 5 章的資料載入讀得進來
+
+
+def test_the_token_file_trains_with_the_chapter5_loop(tmp_path):
+    pages = [Page(str(i), f"page number {i % 3} says hello to the garden") for i in range(30)]
+    write_corpus_text(pages, tmp_path / "web.txt")
+    tokenize_to_file(byte_tokenizer(), tmp_path / "web.txt", tmp_path / "web.bin")
+    cfg = TrainConfig(
+        train_path=str(tmp_path / "web.bin"), valid_path=str(tmp_path / "web.bin"), out_dir=str(tmp_path / "run"),
+        model=ModelConfig(vocab_size=257, context_length=16, d_model=32, n_layers=1, n_heads=4, d_ff=64),
+        batch_size=8, max_steps=30, warmup_steps=3, lr_max=3e-3, log_every=10, eval_every=30, eval_batches=2,
+        checkpoint_every=30, device="cpu",
+    )  # fmt: skip
+    records = train(cfg)
+    assert records[-1]["val_loss"] < math.log(257) - 1  # 比亂猜（ln 257 = 5.55）好得多
+
+
+def test_keep_ascii_catches_languages_the_classifier_has_no_label_for():
+    czech = "Příliš žluťoučký kůň úpěl ďábelské ódy, a nikdo z lidí v té malé vesnici nechápal, proč to dělá. " * 3
+    pages = [Page("en", EN_PARAGRAPH), Page("cs", czech), Page("mixed", "naïve café résumé coöperate " + EN_PARAGRAPH), Page("none", "1234 5678 !!!")]
+    assert [p.url for p in keep_ascii()(pages)] == ["en", "mixed"]  # 沒有字母的頁面算 0%
+    assert [p.url for p in keep_ascii(1.0)(pages)] == ["en"]
+    assert [p.url for p in keep_ascii(0.0)(pages)] == ["en", "cs", "mixed", "none"]
+    assert keep_ascii()([]) == []
