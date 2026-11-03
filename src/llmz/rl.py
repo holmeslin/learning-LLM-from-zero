@@ -1,6 +1,6 @@
 """強化學習入門（第 15 章）：用多臂吃角子老虎機（bandit）看 policy gradient、REINFORCE 與 group-relative advantage。
 
-這裡的 policy 是一排 logits 經過 softmax；第 4 集起，同一個 loss 會換成真正的語言模型。
+這裡的 policy 是一排 logits 經過 softmax。第 4、5 集（token_logprobs、grpo_loss、rollout、train_rlvr）把同一套東西換成真正的語言模型。
 """
 
 import json

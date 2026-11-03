@@ -130,7 +130,7 @@ uv run tools/rlvr.py                                       # 預設：runs/sft/m
 uv run tools/rlvr.py --out_dir runs/rlvr_seed1 --seed 1    # 另一個種子
 ```
 
-預設設定：每步 16 題、每題 8 個回答、每批 rollout 更新 2 次、學習率 `3e-5`（固定）、`clip_eps=0.2`、`temperature=1.0`、600 步，沒有 KL。M4 Max 上，兩個種子的訓練迴圈各是 381 秒與 386 秒（約 6.4 分鐘，含 13 次驗證；每步約 0.6 秒），遠低於 30 分鐘。結果存在 `runs/rlvr/`（`model.pt`、`log.jsonl`、`config.json`）。同一個種子的兩次獨立執行，前 200 步的 `val_accuracy` 一個一個相同（MPS 上也是），所以下面的數字用同樣的指令可以重現。
+預設設定：每步 16 題、每題 8 個回答、每批 rollout 更新 2 次、學習率 `3e-5`（固定）、`clip_eps=0.2`、`temperature=1.0`、600 步，沒有 KL。M4 Max 上，兩個種子的訓練迴圈各是 381 秒與 386 秒（約 6.4 分鐘，含 13 次驗證；每步約 0.6 秒），遠低於 30 分鐘。結果存在 `runs/rlvr/`（`model.pt`、`log.jsonl`、`config.json`）。在同一台 M4 Max 上，同一個種子的兩次獨立執行，前 200 步的 `val_accuracy` 一個一個相同；換一台機器或 CPU，數字會略有不同，但大趨勢應該一樣。
 
 `log.jsonl` 裡每 50 步有一次驗證（500 題 greedy，單次）：
 
@@ -165,10 +165,7 @@ def confidence(model, tasks):
     return total / len(tasks)
 
 
-setups = [
-    (("color", "who"), ["runs/sft/model.pt", "runs/rlvr/model.pt", "runs/rlvr_seed1/model.pt"]),
-    (("add", "subtract"), ["runs/sft_short/model.pt", "runs/rlvr_short/model.pt", "runs/rlvr_short_seed1/model.pt"]),
-]
+setups = [(("color", "who"), ["runs/sft/model.pt", "runs/rlvr/model.pt", "runs/rlvr_seed1/model.pt"])]  # (題型, [要比的模型])
 for kinds, paths in setups:
     valid = make_tasks(1000, seed=1, split="valid", kinds=kinds)
     for path in paths:
@@ -187,9 +184,6 @@ M4 Max 上的輸出（某一次，取樣的部分每次略有不同）：
 runs/sft/model.pt            greedy 0.401（color 0.491  who 0.304）  取樣獎勵 0.400  信心 0.56
 runs/rlvr/model.pt           greedy 0.426（color 0.534  who 0.310）  取樣獎勵 0.419  信心 0.95
 runs/rlvr_seed1/model.pt     greedy 0.418（color 0.495  who 0.335）  取樣獎勵 0.421  信心 0.97
-runs/sft_short/model.pt      greedy 0.266（add 0.289  subtract 0.246）  取樣獎勵 0.184  信心 0.27
-runs/rlvr_short/model.pt     greedy 0.694（add 0.910  subtract 0.513）  取樣獎勵 0.693  信心 0.95
-runs/rlvr_short_seed1/model.pt greedy 0.591（add 0.910  subtract 0.324）  取樣獎勵 0.590  信心 0.99
 ```
 
 `color` 與 `who` 的前後（1000 題 greedy，單次）：
@@ -215,17 +209,17 @@ runs/rlvr_short_seed1/model.pt greedy 0.591（add 0.910  subtract 0.324）  取�
 
 一開始 SFT 模型對同一題的回答不固定，一組 8 個常常有對有錯（本集的練習量過一次：`color` 有 97%、`who` 有 91% 的組是這樣）；訓練一陣子之後，同一題的 8 個回答越來越常完全一樣，這時整組 advantage 是 0，沒有梯度（第 3 集）。同一個提示的答案變得很確定，但對不對是各題各自的運氣。我們的解讀（沒有直接驗證）：模型沒有「該答哪一個」的線索可以放大，獎勵只是把它推向其中一個答案；亂猜的期望值不會因此改變。
 
-學習率會影響這件事發生得多快。其他學習率，同一個種子 0、200 步（`--lr` 與 `--max_steps` 不同，其他一樣；`mixed_groups` 取第 101～200 步的平均）：
+學習率會影響這件事發生得多快。其他學習率，同一個種子 0、200 步（`--lr` 與 `--max_steps` 不同，其他一樣；`mixed_groups` 取第 101～200 步之間記錄到的 6 個點的平均，即第 120、140、150、160、180、200 步）：
 
 | `--lr` | 0 步 | 50 步 | 100 步 | 150 步 | 200 步 | `mixed_groups` |
 | --- | --- | --- | --- | --- | --- | --- |
 | `1e-5` | 0.400 | 0.424 | 0.420 | 0.406 | 0.422 | 0.62 |
-| `3e-5`（預設） | 0.400 | 0.368 | 0.356 | 0.374 | 0.410 | 0.21 |
+| `3e-5`（預設） | 0.400 | 0.368 | 0.356 | 0.374 | 0.410 | 0.22 |
 | `1e-4` | 0.400 | 0.408 | 0.392 | 0.354 | 0.364 | 0.10 |
 | `3e-4` | 0.400 | 0.272 | 0.278 | 0.198 | 0.200 | 0.02 |
 
 ```bash
-uv run tools/rlvr.py --lr 1e-4 --max_steps 200 --out_dir runs/rlvr_lr1e-4   # 其餘類推
+uv run tools/rlvr.py --lr 1e-4 --max_steps 200 --log_every 20 --out_dir runs/rlvr_lr1e-4   # 其餘學習率類推；預設的 3e-5 就是前面那次完整訓練的前 200 步
 ```
 
 小的學習率（`1e-5`）組內還有對有錯，但 200 步內正確率沒有動；大的學習率很快就把組內變成一致，`3e-4` 更把正確率推到 0.20，比亂猜（0.40）還低。每一個學習率都沒有讓正確率往上。
@@ -252,21 +246,42 @@ SFT 的結果是類似的：第 14 章把 SFT 的訓練量加到 20 倍，`color
 uv run tools/sft.py --out_dir runs/sft_short --max_steps 100
 ```
 
-6.5 秒的訓練迴圈。這個模型已經學到格式，`count` 是全對（192／192），但加法與減法還沒學好：1000 題裡 `add` 62／188、`subtract` 53／200。SFT 學得多一點（`--max_steps 200`）時這兩種會升到 150／188 與 83／200，到 1000 步全對：能力是練得出來的，只是這個模型還沒練到。用 RLVR 練 `add` 與 `subtract`：
+6.5 秒的訓練迴圈。這個模型已經學到格式，`count` 是全對（192／192），但加法與減法還沒學好：1000 題裡 `add` 62／188、`subtract` 53／200。SFT 學得多一點時（`uv run tools/sft.py --out_dir runs/sft200 --max_steps 200`）這兩種會升到 150／188 與 83／200，到 1000 步全對：能力是練得出來的，只是這個模型還沒練到。用 RLVR 練 `add` 與 `subtract`：
 
 ```bash
 uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --lr 1e-5 --out_dir runs/rlvr_short
 uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --lr 1e-5 --out_dir runs/rlvr_short_seed1 --seed 1
 ```
 
-訓練迴圈各 313 秒。學習率換成 `1e-5`：`3e-5` 與 `1e-4`（150 步）時組內很快就沒有對有錯，正確率停在 0.536 與 0.430，`1e-5` 可以一路爬。500 題驗證（greedy，單次）：
+訓練迴圈各 313 秒。學習率用 `1e-5`，是因為更大的學習率組內很快就沒有對有錯、正確率停下來（種子 0、150 步，單次）：
+
+```bash
+uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --lr 3e-5 --max_steps 150 --out_dir runs/rlvr_short_lr3e-5   # 150 步 0.536
+uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --lr 1e-4 --max_steps 150 --out_dir runs/rlvr_short_lr1e-4   # 150 步 0.430
+```
+
+`3e-5` 與 `1e-4` 在 100 步之後的 `mixed_groups` 都是 0，`1e-5` 到 400 步還在爬（0.702）。500 題驗證（greedy，單次）：
 
 | 步數 | 0 | 100 | 200 | 300 | 400 | 600 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 種子 0 | 0.274 | 0.452 | 0.652 | 0.654 | 0.702 | 0.702 |
 | 種子 1 | 0.274 | 0.386 | 0.534 | 0.578 | 0.578 | 0.578 |
 
-1000 題驗證（上面 `evalall` 輸出的後三行）：
+1000 題驗證。用同一段評估程式，只把 `setups` 換成：
+
+```python,ignore
+setups = [(("add", "subtract"), ["runs/sft_short/model.pt", "runs/rlvr_short/model.pt", "runs/rlvr_short_seed1/model.pt"])]
+```
+
+輸出（某一次）：
+
+```text
+runs/sft_short/model.pt      greedy 0.266（add 0.289  subtract 0.246）  取樣獎勵 0.184  信心 0.27
+runs/rlvr_short/model.pt     greedy 0.694（add 0.910  subtract 0.513）  取樣獎勵 0.693  信心 0.95
+runs/rlvr_short_seed1/model.pt greedy 0.591（add 0.910  subtract 0.324）  取樣獎勵 0.590  信心 0.99
+```
+
+整理成表：
 
 | | 合計 | `add` | `subtract` | 取樣獎勵 | 信心 |
 | --- | --- | --- | --- | --- | --- |
