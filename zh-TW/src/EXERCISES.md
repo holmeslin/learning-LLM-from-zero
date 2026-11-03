@@ -2762,6 +2762,99 @@ for tag in ["select", "nav", "footer", "aside"]:
     print(f"{tag}：多丟 {before - after:,} 個字元")
 ```
 
+## 第 14 章 後訓練：SFT 與偏好學習
+
+### 第 1 集 base model 與指令模型 — 狀態：可用
+
+**題目**
+
+用 `make_tasks(1000, seed=1, split="valid")`。先寫一個「永遠回答 `three`」的模型，用 `reward` 對五種題型各算正確率。再讓每種題型都回答「它自己的標準答案裡最常見的那一個」（用 `collections.Counter`），算每種題型的正確率與合計。第 3 集的 SFT 模型在同一批題目上是 755/1000，這個固定答案的基準線是多少？`color` 與 `who` 的基準線，和「在題目裡出現的候選之間亂猜」比起來，哪個高？
+
+**練習目標**：評分要和基準線比。一個什麼都不看的固定答案，在有些題型上也會答對。
+
+**批改重點**：永遠回答 `three` 時，加 8.5%、減 13.5%、數數量 26.0%，`color` 與 `who` 是 0%（答案不是數字）。每種題型回答它最常見的答案：`five` 22.3%、`one` 28.5%、`three` 26.0%、`purple` 12.1%、`Tom` 14.0%，合計 20.4%。SFT 的 75.5% 比它高 55 個百分點，主要是加、減、數數量從 20% 上下變成 100%。`color` 的固定答案只有 12.1%，比在兩個候選顏色之間亂猜的 50% 低很多；`who` 的 14.0% 也比三選一的 33% 低。差別在「知道答案一定在題目裡」，這是 SFT 學到的答案範圍（第 3 集）。
+
+**參考答案**
+
+```python
+from collections import Counter
+
+from llmz.posttrain import KINDS, make_tasks, reward
+
+valid = make_tasks(1000, seed=1, split="valid")
+print("永遠回答 three：")
+for kind in KINDS:
+    mine = [t for t in valid if t.kind == kind]
+    print(f"  {kind:9s}{sum(reward(t, 'three') for t in mine) / len(mine):.1%}")
+
+total = 0
+for kind in KINDS:
+    mine = [t for t in valid if t.kind == kind]
+    best, count = Counter(t.answer for t in mine).most_common(1)[0]
+    total += sum(reward(t, best) for t in mine)
+    print(f"{kind:9s}最常見的答案 {best}：{count / len(mine):.1%}")
+print(f"每種題型都回答它最常見的答案，合計 {total / len(valid):.1%}")
+```
+
+### 第 2 集 chat template 與 loss mask — 狀態：可用
+
+**題目**
+
+用第 3 章的 byte-level tokenizer（`Tokenizer(base_vocab([END]), [], [END])`），對 `make_tasks(1000, seed=0)` 的每一題用 `encode_chat` 編碼。算每題平均幾個 token、其中幾個算 loss、比例多少。再算：如果把 `Assistant:` 這個角色標記也算進 loss，比例變成多少？為什麼我們不這樣做？
+
+**練習目標**：回覆只佔整串很小的一部分，mask 決定這一小部分以外的 token 不算 loss；角色標記是固定的、不需要學。
+
+**批改重點**：每題平均 94.2 個 token（一個 byte 一個 token），算 loss 的 6.0 個（空格、答案的字母、`<|endoftext|>`），6.4%。`Assistant:` 是 10 個 byte，加進去變成 17.0%。不這樣做：`Assistant:` 在推論時是我們填的提示（`generation_prompt=True`），模型不用寫；它每一題都一樣，loss 很快變成 0，只是稀釋平均。
+
+**參考答案**
+
+```python
+from llmz.posttrain import encode_chat, make_tasks, task_messages
+from llmz.tokenizer import Tokenizer, base_vocab
+
+END = "<|endoftext|>"
+tokenizer = Tokenizer(base_vocab([END]), [], [END])
+header = len(tokenizer.encode("Assistant:"))
+total = trained = 0
+tasks = make_tasks(1000, seed=0)
+for task in tasks:
+    ids, mask = encode_chat(tokenizer, task_messages(task, with_answer=True))
+    total += len(ids)
+    trained += sum(mask)
+print(f"每題平均 {total / len(tasks):.1f} 個 token，算 loss 的 {trained / len(tasks):.1f} 個（{trained / total:.1%}）")
+print(f"連 Assistant:（{header} 個 token）也算：{(trained + header * len(tasks)) / total:.1%}")
+```
+
+### 第 3 集 SFT 玩具版 — 狀態：可用
+
+**題目**
+
+用第 3 集的 smoke 設定（隨機初始化的小模型、byte-level tokenizer、60 步），只把 `n_train` 分別換成 16 與 1000，各訓練一次，印出最後的訓練 loss 與 `val_loss`。哪一個的訓練 loss 比較低？哪一個的 `val_loss` 比較低？為什麼？
+
+**練習目標**：SFT 的資料夠不夠多會影響泛化；題目太少，模型把它們背下來。
+
+**批改重點**：`n_train=16` 的訓練 loss 很低（約 0.03），`val_loss` 卻很高（約 2.8）：60 步 × 16 = 960 條樣本，平均每一題被看了 60 次，模型背下這 16 題的答案，沒學到規則；`n_train=1000` 的訓練 loss 較高（約 0.9），`val_loss` 低得多（約 1.2）。具體數字隨機器與 PyTorch 版本略有不同，但這個大小關係穩定。
+
+**參考答案**
+
+```python
+from llmz.model import ModelConfig
+from llmz.posttrain import SFTConfig, train_sft
+from llmz.tokenizer import Tokenizer, base_vocab
+
+END = "<|endoftext|>"
+tokenizer = Tokenizer(base_vocab([END]), [], [END])
+for n_train in [16, 1000]:
+    cfg = SFTConfig(
+        base_path="", out_dir=f"smoke_{n_train}",
+        model=ModelConfig(vocab_size=257, context_length=256, d_model=64, n_layers=2, n_heads=4, d_ff=128),
+        n_train=n_train, n_valid=20, batch_size=16, max_steps=60, lr_max=3e-3, lr_min=3e-4, warmup_steps=5,
+        log_every=60, eval_every=60, device="cpu",
+    )
+    last = train_sft(cfg, tokenizer)[-1]
+    print(f"n_train={n_train:4d}：訓練 loss {last['loss']:.2f}，val_loss {last['val_loss']:.2f}")
+```
+
 ## 第 15 章 後訓練：RL 與可驗證獎勵
 
 ### 第 1 集 policy gradient 直覺 — 狀態：可用
