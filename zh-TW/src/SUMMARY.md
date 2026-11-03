@@ -70,7 +70,7 @@
     - [checkpoint](chapter5/07_checkpoint.md)
     - [組裝訓練迴圈與 JSONL log](chapter5/08_train_loop_logging.md)
     - [MPS 注意事項（TF32、compile）](chapter5/09_mps_notes.md)
-    - [第一次完整訓練 TinyStories](chapter5/10_full_training.md)
+    - [第一次完整訓練 TinyStories（40M tokens）](chapter5/10_full_training.md)
     - [畫 loss 曲線](chapter5/11_loss_curve.md)
 - [生成與實驗](chapter6/README.md)
     - [greedy decoding](chapter6/01_greedy.md)

@@ -1483,7 +1483,7 @@ print([r["step"] for r in records])
 
 這集是實測數字與說明。讀者想知道自己機器的速度，請他跑 `uv run tools/train.py --out_dir runs/speed --max_steps 50 --log_every 10`（有 MPS 自動用 MPS），看 log 裡 `time` 欄位每 10 步差多少秒。
 
-### 第 10 集 第一次完整訓練 TinyStories — 狀態：不出題
+### 第 10 集 第一次完整訓練 TinyStories（40M tokens） — 狀態：不出題
 
 這集是跑 `uv run tools/train.py --out_dir runs/base --compile`，幾十分鐘。讀者的 loss 曲線應該和書上接近（最後驗證 loss 差 0.05 以內都正常）。跑不動（記憶體不足）時建議 `--batch_size 16 --max_steps 10000`，token 總量相同。
 

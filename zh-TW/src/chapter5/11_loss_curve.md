@@ -45,6 +45,7 @@ print([r["step"] for r in records if "val_loss" in r])
 ```
 
 - `plt.subplots` 給一張圖與一個座標軸 `ax`；`ax.plot(x, y)` 畫一條線，`alpha=0.4` 讓訓練 loss 淡一點（它很吵），驗證 loss 畫實線加圓點。
+- `--x tokens` 把橫軸換成「看過的 token 數」（步數 × batch × 長度，從 `config.json` 讀），比較不同 batch 大小的 run 時用（第 6 章第 10 集）。
 - `fig.savefig` 存成 PNG；在終端機執行不需要開視窗。
 
 ```bash
