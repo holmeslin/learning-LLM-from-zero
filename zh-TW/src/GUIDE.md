@@ -64,8 +64,9 @@
 | --- | --- | --- |
 | 第 1 章 | 張量與剛好夠用的數學 | `chapter1/` |
 | 第 2 章 | autograd 與訓練迴圈 | `chapter2/` |
+| 第 3 章 | Tokenizer：從 bytes 到 token | `chapter3/` |
 
-還沒寫：第 3 章 Tokenizer、第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -171,7 +172,8 @@
 | --- | --- |
 | 第 1 章 | 取得程式碼與 `uv run` 固定句型、`torch.tensor`、`.sum()`／`.item()`、`.shape`／`.dtype`／`.float()`／`.reshape`／`torch.zeros`／`torch.ones`／`torch.arange`、索引與切片（含用索引張量取多個位置）、broadcasting 與 `.sum(dim=, keepdim=)`、`torch.dot`／`@`／`.norm()`、矩陣乘法與 `.T`、`torch.einsum` 與 `.transpose()`／`torch.equal`、`get_device()` 與 `.to(device)`、`torch.manual_seed`／`torch.rand`／`torch.randn`／`torch.randint`／`.mean()`／`.std()`／`.abs()`、用有限差分算導數與梯度（純 Python 浮點數與 `torch.zeros_like`／`.clone()`）、手寫 5 步梯度下降、自己寫的 softmax（`torch.exp`、`.max()`）、`torch.log`／`.prod()`／`torch.multinomial`／`torch.argmax`、cross-entropy 與 perplexity、log-sum-exp，以及 `llmz.functional` 的 `softmax`／`logsumexp`／`log_softmax`／`cross_entropy`／`perplexity` |
 | 第 2 章 | `requires_grad=True`／`.backward()`／`.grad`／`grad_fn`、`torch.no_grad()`／`.grad.zero_()`／就地運算（結尾底線）、`nn.Module` 子類別（`super().__init__()`、`nn.Parameter`、`forward`、`model(x)`、`parameters()`／`named_parameters()`、`model.to(device)`）、MSE loss、自己寫的簡易 `SGD` 類別（`step()`／`zero_grad()`、`p.grad = None`）、五步訓練迴圈固定句型、線性回歸完整範例、`state_dict()`／`torch.save`／`torch.load`／`load_state_dict`／`fill_`、`llmz.utils.count_parameters`、`numel()`、記憶體（參數 4 位元組、梯度 4、AdamW 狀態 8）與 FLOPs（矩陣乘法 \\( 2mkn \\)、訓練一個 token 約 6 × 參數量）估算 |
-| 第 3 章以後 | 尚未出版 |
+| 第 3 章 | `ord`／`chr`、`str.encode("utf-8")`／`bytes.decode(errors="replace")`、`bytes([...])`、`Counter`、BPE 的想法與次數相同取較大 pair 的規則、`regex` 套件與 `GPT2_PATTERN`、特殊 token 與 `re.escape`／`re.split`、`multiprocessing.Pool` 與 `if __name__ == "__main__":`、`yield`／`yield from`、`io.StringIO`、`json`、latin-1、`array.array("H")`、`np.memmap`、HTTP Range、`llmz.tokenizer`（`pretokenize`、`split_on_special`、`count_words`、`count_pairs`、`merge_word`、`base_vocab`、`train_bpe_naive`、`count_words_parallel`、`train_bpe`、`Tokenizer` 的 `encode_word`／`encode`／`decode`／`encode_iterable`／`save`／`load`）、`llmz.data`（`download`、`cut_at_last_document`、`tokenize_to_file`、`load_tokens`）、`tools/prepare_data.py` 與標準語料（train 40,720,162 個 token、valid 5,461,883 個、vocab 10000、4.12 bytes/token） |
+| 第 4 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -207,7 +209,16 @@
 | loss（MSE）、優化器 `step()`／`zero_grad()`、五步迴圈 | 第 2 章第 4 集 | 手寫更新與歸零 |
 | `state_dict()`、`torch.save`／`torch.load`、`load_state_dict`、`fill_` | 第 2 章第 6 集 | 不存檔 |
 | `count_parameters`、`numel()`、記憶體與 FLOPs 估算 | 第 2 章第 7 集 | 不估算 |
-| tokenizer、BPE、bytes 相關 | 第 3 章 | 不談文字 |
+| `ord`／`chr`、`encode`／`decode`、bytes | 第 3 章第 1 集 | 不談文字 |
+| BPE 的想法、`Counter`、相鄰 pair 統計 | 第 3 章第 3 集 | 不談 tokenizer |
+| `regex`、`GPT2_PATTERN`、`pretokenize` | 第 3 章第 4 集 | 用 `str.split()` |
+| 特殊 token、`split_on_special` | 第 3 章第 5 集 | 文字裡不放特殊 token |
+| `count_words`、`count_pairs`、`merge_word`、`train_bpe_naive` | 第 3 章第 6、7 集 | 手算 |
+| `multiprocessing`、`count_words_parallel`、`train_bpe` | 第 3 章第 8 集 | 用 `train_bpe_naive` |
+| `Tokenizer`、`encode`、`decode` | 第 3 章第 9、10 集 | 只訓練不 encode |
+| `yield`、`encode_iterable`、`save`／`load` | 第 3 章第 11 集 | 整段文字一次 encode |
+| `llmz.data`、`np.memmap`、`tools/prepare_data.py`、標準語料 | 第 3 章第 14 集 | 不碰資料檔 |
+| Transformer 零件（Linear、Embedding、RMSNorm、attention、RoPE） | 第 4 章 | 不談模型結構 |
 
 ---
 
