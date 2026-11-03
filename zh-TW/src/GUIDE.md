@@ -69,8 +69,14 @@
 | 第 5 章 | 訓練 | `chapter5/` |
 | 第 6 章 | 生成與實驗 | `chapter6/` |
 | 附錄一 | MLX、einops、常見錯誤、CS336 A1 對照、雲端 GPU | `appendix1/` |
+| 第 7 章 | 效能分析與記憶體 | `chapter7/` |
+| 第 8 章 | FlashAttention 的原理 | `chapter8/` |
+| 第 9 章 | 平行化：原理與 CPU 模擬 | `chapter9/` |
+| 第 10 章 | Scaling laws | `chapter10/` |
+| 第 11 章 | 推論 | `chapter11/` |
+| 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 
-還沒寫：第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -181,7 +187,13 @@
 | 第 5 章 | 語言模型 loss 的對齊與初始值 ≈ ln V、`torch.optim.Optimizer` 基底（`param_groups`、`state`、`@torch.no_grad()` 裝飾器）、`llmz.optim`（`SGD`、`AdamW`（m／v／偏差修正／decoupled weight decay、預設 betas (0.9, 0.95)、wd 0.1）、`lr_cosine_schedule`（warmup 200、1e-3 → 1e-4、5000 步）、`clip_grad_norm_`（max_norm 1.0））、`mul_`／`add_` 就地運算、`get_batch`（`torch.randint` 起點、memmap 切片、int64）、`llmz.train`（`TrainConfig`、`save_checkpoint`／`load_checkpoint`、`evaluate`、`train`、JSONL log、`latest.pt` 自動接續、smoke 設定）、`model.eval()`／`train()`、`tools/train.py` 命令列與 `--compile`、MPS 實測（CPU 2.4 s／MPS 0.44 s／compile 0.28 s 一步，5.5 GB）、沒有 TF32、`torch.mps.synchronize()`、完整訓練的結果與 `tools/plot_loss.py` |
 | 第 6 章 | 生成迴圈（餵最後 `context_length` 個、取最後位置 logits）、`llmz.generate`（`greedy_next`、`sample_next` 的 temperature 與 top-p（`torch.sort`／`cumsum`／`scatter`）、`generate`）、載入 `runs/base/model.pt` 生成、消融實驗的做法（1000 步縮短設定、`runs/base_1k` 基準、只改一個零件、差 0.02 內是雜訊）與結果（拿掉 RMSNorm、post-norm、NoPE、SiLU 取代 SwiGLU）、學習率掃描（三倍一格）、batch 大小（固定 token 總數）；`tools/train.py` 的 `--norm`／`--norm_position`／`--no-rope`／`--ffn`／`--d_ff`／`--lr_max`／`--batch_size` 等旗標 |
 | 附錄一 | MLX 的概念對照（不裝）、`einops` 的 `rearrange`／`reduce`／`repeat`／`einsum`（只在附錄）、常見錯誤訊息對照、CS336 A1 對照表、雲端 GPU 的流程 |
-| 第 7 章以後 | 尚未出版 |
+| 第 7 章 | 記憶體階層與 M4 Max 實測頻寬（279 GB/s）與算力（10.3 TFLOPs）、`numel() * element_size()`、`llmz.profile`（`sync`、`timeit`（warmup、前後同步、取平均）、`saved_activation_bytes`（`saved_tensors_hooks`、`exclude`）、`estimate_memory`）、`torch.profiler`（`profile`、`record_function`、`key_averages().table`）、訓練記憶體四塊與 activations 的規律（跟 batch、層數成正比，attention 跟長度平方成正比）、float16／bfloat16 的範圍與精度、`torch.autocast` 與 `.float()` 算 loss、activation checkpointing（`torch.utils.checkpoint.checkpoint`、`ModelConfig(activation_checkpoint=True)`、`--activation_checkpoint`、`self.training`）、`torch.compile` 的融合原理與代價、arithmetic intensity 與 roofline |
+| 第 8 章 | 分數矩陣 `(B, H, T, T)` 的 \\( O(T^2) \\) 記憶體（第 4 章的 attention 存約兩個分數矩陣）、分塊矩陣乘法與讀取量 \\( 2n^3/b \\)、online softmax（`m`、`l`、`acc` 與 `correction = exp(m - m_new)`、logsumexp = \\( m + \log \ell \\)）、`llmz.flash`（`flash_attention_forward`（回傳 `o` 與 `lse`、causal 跳塊與對角線遮罩、`new_zeros`／`new_full`）、`flash_attention_backward`（\\( dV, dP, dS, dQ, dK \\) 公式、\\( D = \text{rowsum}(dO \circ O) \\)、用 lse 重算 \\( P \\)）、`FlashAttention`（`torch.autograd.Function`、`ctx.save_for_backward`、`.apply`）、`flash_attention`）、backward 記憶體從平方變線性、Triton 的程式模型（只讀不跑）、`F.scaled_dot_product_attention` 的各種實作與 CPU／MPS 實測 |
+| 第 9 章 | 多卡的記憶體與時間估算、四種分法、rank／world size、`torch.multiprocessing.spawn`、`dist.init_process_group("gloo", ...)`、`dist.barrier`、`llmz.dist`（`launch`、`print_in_order`、`ring_all_reduce`（`isend`／`recv`、`chunk` 的 view）、`broadcast_parameters`、`all_reduce_gradients`、`BucketedDDP`（`register_post_accumulate_grad_hook`、`async_op=True` 與 `.wait()`、25 MB bucket）、`ShardedOptimizer`（大的先分、`optimizer_cls` 與 `**kwargs`））、`dist.broadcast`／`all_reduce`／`all_gather`／`reduce_scatter`／`all_gather_into_tensor`／`reduce_scatter_tensor`、all-reduce = reduce-scatter + all-gather、ring 的通訊量 \\( 2(N-1)/N \cdot S \\)、ZeRO 1／2／3 與 FSDP 的記憶體與通訊、tensor parallel 的 column／row 切法、pipeline 的 micro-batch 與 bubble \\( (p-1)/(m+p-1) \\)、計算與通訊的比值 \\( 1.5\,BT\cdot\text{BW}/F \\)、M4 Max 上 Gloo 約 0.5～0.65 GB/s |
+| 第 10 章 | 冪律與 log-log 直線、Kaplan 的 \\( L(N) = (N_c/N)^{0.076} \\)、\\( C \approx 6ND \\) 的取捨與 IsoFLOPs 的 U 形、Chinchilla 公式 \\( E + A/N^\alpha + B/D^\beta \\) 與每個參數約 20 個 token（及公式第三種方法的差異）、`llmz.scaling`（`chinchilla_loss`、`fit_isoflop_minimum`（對 log N 擬合拋物線）、`fit_power_law`（log-log 直線）、`non_embedding_params`、`steps_for_budget`）、`np.polyfit`／`np.logspace`／`np.argmin`／`np.random.default_rng`、外推的誤差放大、`tools/scaling_sweep.py` 與 Mac 上 13 個小模型的實測、Besiroglu 等人的重新擬合、過度訓練小模型、μP 的想法 |
+| 第 11 章 | KV cache 的原理（舊位置的 k、v 不變）、`llmz.inference`（`KVCache`（預先配置 `(n_layers, B, H, max_len, d_head)`、`length`、`nbytes`）、`attention_cached`（RoPE 位置從 `cache.length` 接續、對整個 cache 做 attention 並用 mask 遮掉，形狀固定）、`forward_cached`（只支援 pre-norm、總長不超過 `context_length`）、`pick_next`、`generate_cached`、`to_probs`、`accept_or_resample`、`speculative_generate`（兩個 cache、退回 `length`）、`quantize`／`dequantize`（對稱、per-channel 與分組）、`quantize_model_`（模擬量化））、prefill 與 decode（compute-bound 與 memory-bound、intensity 約 \\( T/2 \\)）、`statistics.median`、推論記憶體（權重 + KV cache）與 decode 下限（權重位元組 ÷ 頻寬）、Llama 3 8B 的設定與 GQA／MQA、batching（M4 Max 實測）與 padding／continuous batching／PagedAttention、speculative decoding 的接受規則與實測、`for ... else`、量化的離群值與分組（實測 int8／int4／int3／int2 的 loss）、MoE（router、top-k、`torch.topk`、`torch.where`、`torch.bincount`、輔助 loss）、MLA、sliding window、線性 attention 與 state space model |
+| 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
+| 第 12 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -257,7 +269,42 @@
 | 消融實驗、`--norm`／`--norm_position`／`--no-rope`／`--ffn` 旗標 | 第 6 章第 5～8 集 | 只跑標準設定 |
 | 學習率掃描、batch 大小實驗 | 第 6 章第 9、10 集 | 用預設值 |
 | `einops` | 附錄一 b | 用 `reshape`／`transpose`／`einsum` |
-| 第二部內容（效能分析、FlashAttention、平行化、scaling law、推論） | 第 7 章起 | 不談 |
+| 計時要同步與 warmup、`llmz.profile.sync`／`timeit` | 第 7 章第 2 集 | 用 `time.perf_counter()` 直接量 |
+| `torch.profiler` | 第 7 章第 3 集 | 用 `timeit` 一段段量 |
+| `saved_activation_bytes`、`estimate_memory`、activations 的估算 | 第 7 章第 4 集 | 只算參數、梯度、優化器狀態 |
+| float16／bfloat16、`torch.autocast` | 第 7 章第 5 集 | 全部 float32 |
+| activation checkpointing、`activation_checkpoint` 開關 | 第 7 章第 6 集 | 不重算 |
+| `torch.compile` 的融合原理 | 第 7 章第 7 集 | 只當成 `--compile` 開關 |
+| arithmetic intensity、roofline | 第 7 章第 8 集 | 只說「矩陣乘法最花時間」 |
+| 分數矩陣的 \\( O(T^2) \\) 記憶體 | 第 8 章第 1 集 | 只說「attention 分數矩陣很大」 |
+| 分塊（tiling） | 第 8 章第 2 集 | 整個矩陣一次算 |
+| online softmax | 第 8 章第 3 集 | 一次算整列 softmax |
+| `flash_attention_forward` | 第 8 章第 4 集 | 用第 4 章的 attention |
+| attention 的 backward 公式、`torch.autograd.Function`、`flash_attention` | 第 8 章第 5 集 | 交給 autograd |
+| Triton | 第 8 章第 6 集 | 不談 GPU kernel |
+| `F.scaled_dot_product_attention` 的實作選擇（只用來比較） | 第 8 章第 7 集 | 只用來驗證第 4 章的結果 |
+| 多 process、rank、`launch`、`print_in_order`、`dist.barrier` | 第 9 章第 2 集 | 單一 process |
+| 集合通訊、`ring_all_reduce`、`isend`／`recv` | 第 9 章第 3 集 | 不通訊 |
+| DDP、`broadcast_parameters`、`all_reduce_gradients` | 第 9 章第 4 集 | 單機訓練 |
+| `BucketedDDP`、鉤子與非同步通訊 | 第 9 章第 5 集 | 用 naive DDP |
+| `ShardedOptimizer`、ZeRO | 第 9 章第 6 集 | 每個 rank 完整的優化器 |
+| FSDP、`all_gather_into_tensor`、`reduce_scatter_tensor` | 第 9 章第 7 集 | 只切優化器狀態 |
+| tensor／pipeline parallel | 第 9 章第 8 集 | 只用 data parallel |
+| 通訊與計算的比值估算 | 第 9 章第 9 集 | 只估計算量 |
+| 冪律、scaling law | 第 10 章第 1 集 | 只說「模型越大越好」 |
+| IsoFLOPs、Chinchilla 公式、`chinchilla_loss` | 第 10 章第 2 集 | 不談計算預算的分配 |
+| `fit_isoflop_minimum`、拋物線擬合 | 第 10 章第 3 集 | 直接挑最小的點 |
+| `fit_power_law`、外推 | 第 10 章第 4 集 | 不擬合 |
+| `tools/scaling_sweep.py`、`non_embedding_params`、`steps_for_budget` | 第 10 章第 5 集 | 用離線資料 |
+| scaling law 的限制、μP | 第 10 章第 6 集 | 不談 |
+| KV cache、`KVCache`、`forward_cached` | 第 11 章第 1 集 | 每一步重算整段 |
+| prefill 與 decode、`generate_cached` | 第 11 章第 2 集 | 用第 6 章的 `generate` |
+| 推論記憶體與延遲估算、GQA | 第 11 章第 3 集 | 只估訓練 |
+| batching、continuous batching | 第 11 章第 4 集 | 一次一條序列 |
+| speculative decoding、`speculative_generate` | 第 11 章第 5 集 | 一次一個 token |
+| 量化、`quantize`、`quantize_model_` | 第 11 章第 6 集 | float32 權重 |
+| MoE、attention 替代方案 | 第 11 章第 7 集 | 不談 |
+| CUDA kernel、`load_inline`、`torch.cuda.Event`、memory snapshot | 附錄二 a | 用 PyTorch 運算、`timeit` 與 `torch.profiler` |
 
 ---
 

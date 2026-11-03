@@ -12,7 +12,7 @@
 {{#include ../../../src/llmz/model.py:lm}}
 ```
 
-`nn.ModuleList` 是 `nn.Module` 的串列版：放進去的每一層的參數都會被登記，`parameters()`、`.to(device)`、`state_dict()` 都看得到（普通的 Python list 不會）。RoPE 建一個給所有層共用。`forward` 就是第 1 集那張圖：查表、逐層、norm、投影到 `vocab_size`。
+`nn.ModuleList` 是 `nn.Module` 的串列版：放進去的每一層的參數都會被登記，`parameters()`、`.to(device)`、`state_dict()` 都看得到（普通的 Python list 不會）。RoPE 建一個給所有層共用。`forward` 就是第 1 集那張圖：查表、逐層、norm、投影到 `vocab_size`。迴圈裡 `if self.cfg.activation_checkpoint` 那個分支是第 7 章第 6 集省記憶體用的，預設關閉，現在把它當成只有 `x = block(x)` 這一行。
 
 ```python
 import torch

@@ -1695,3 +1695,874 @@ torch.ones(2, requires_grad=True).backward()
 ### e 雲端 GPU 租用 — 狀態：不出題
 
 流程說明，無法在本機練習。
+
+## 第 7 章 效能分析與記憶體
+
+### 第 1 集 記憶體階層 — 狀態：可用
+
+**題目**
+
+標準模型最後輸出的 logits 形狀是 `(32, 256, 10000)`、float32。不建立這個張量，算出它佔幾 MB，以及它是每一層進出的 `(32, 256, 512)` 張量的幾倍。
+
+**練習目標**：位元組數 = 元素個數 × 每個元素的大小。
+
+**批改重點**：327.68 MB；約 19.5 倍（就是 10000 / 512）。
+
+**參考答案**
+
+```python
+logits_bytes = 32 * 256 * 10000 * 4
+hidden_bytes = 32 * 256 * 512 * 4
+print(logits_bytes / 1e6, "MB")
+print(round(logits_bytes / hidden_bytes, 1))
+```
+
+### 第 2 集 正確計時 — 狀態：可用
+
+**題目**
+
+在 CPU 上用 `llmz.profile.timeit` 量 256 × 256 與 1024 × 1024 的矩陣乘法，印出每次的毫秒數與 GFLOPs。哪一個的 GFLOPs 比較高？
+
+**練習目標**：用 `lambda` 包住要量的程式；FLOPs 公式 \\( 2n^3 \\)。
+
+**批改重點**：時間每台機器不同。哪個 GFLOPs 高也不一定：大矩陣把固定開銷攤掉了，但 CPU 上小矩陣可能整個放進快取。重點是會用 `timeit` 與 \\( 2n^3 \\)。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.profile import timeit
+
+device = torch.device("cpu")
+for n in [256, 1024]:
+    a = torch.randn(n, n)
+    b = torch.randn(n, n)
+    seconds = timeit(lambda: a @ b, device, warmup=2, repeat=10)
+    print(n, f"{seconds * 1000:.3f} ms", f"{2 * n**3 / seconds / 1e9:.1f} GFLOPs")
+```
+
+### 第 3 集 `torch.profiler` — 狀態：可用
+
+**題目**
+
+用 `torch.profiler` 剖析 `llmz.layers.RMSNorm(512)` 對 `torch.randn(8, 128, 512)` 的 forward，印出統計表。表裡出現了哪幾種 `aten::` 運算？對照 `RMSNorm.forward` 的程式碼，各是哪一行做的？
+
+**練習目標**：讀 profiler 的表；一行 Python 對應一到多個底層運算。
+
+**批改重點**：主要是 `aten::mul` 兩次（平方、乘 weight）、`aten::mean`（裡面再呼叫 `sum` 與 `div_`）、`aten::add`（加 eps）、`aten::sqrt`、`aten::div`（`x / rms`）；另外有 `aten::to`、`copy_`、`empty` 之類的小運算，時間可以忽略。
+
+**參考答案**
+
+```python
+import torch
+from torch.profiler import ProfilerActivity, profile
+
+from llmz.layers import RMSNorm
+
+norm = RMSNorm(512)
+x = torch.randn(8, 128, 512)
+with torch.no_grad(), profile(activities=[ProfilerActivity.CPU]) as prof:
+    norm(x)
+print(prof.key_averages().table(sort_by="self_cpu_time_total", max_name_column_width=14))
+```
+
+### 第 4 集 記憶體估算 — 狀態：可用
+
+**題目**
+
+一個 1.24 億參數的模型用 AdamW 訓練，參數、梯度、優化器狀態共要幾 GB？再用 `saved_activation_bytes` 量 `llmz.layers.SwiGLU(512, 1344)` 對 `torch.randn(4, 256, 512)` 的 forward 存了幾 MB（排除參數），並說明大約是幾個 `(4, 256, 1344)` 張量的大小。
+
+**練習目標**：`estimate_memory` 與 `saved_activation_bytes(fn, exclude=...)` 的用法。
+
+**批改重點**：1.984 GB；SwiGLU 存了 29.6 MB，約 5.4 個 `(4, 256, 1344)` 張量（每個 5.5 MB）：w1、w3 的輸出、silu 的中間結果與相乘的結果，再加上輸入（2.1 MB）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import SwiGLU
+from llmz.profile import estimate_memory, saved_activation_bytes
+
+print(sum(estimate_memory(124_000_000).values()) / 1e9, "GB")
+torch.manual_seed(0)
+ffn = SwiGLU(512, 1344)
+x = torch.randn(4, 256, 512)
+saved = saved_activation_bytes(lambda: ffn(x).sum(), exclude=ffn.parameters())
+print(saved / 1e6, "MB")
+print(saved / (4 * 256 * 1344 * 4))
+```
+
+### 第 5 集 混合精度 autocast — 狀態：可用
+
+**題目**
+
+把 256、257、258、259 轉成 bfloat16 再轉回來，印出結果。為什麼 257 變了？再用 float16 試一次。
+
+**練習目標**：bfloat16 只有 7 位元尾數，256 到 512 之間只能表示偶數。
+
+**批改重點**：bfloat16 得到 256、256、258、260（257、259 捨入到最近的偶數）；float16 四個都不變。
+
+**參考答案**
+
+```python
+import torch
+
+values = torch.tensor([256.0, 257.0, 258.0, 259.0])
+print(values.to(torch.bfloat16).float())
+print(values.to(torch.float16).float())
+```
+
+### 第 6 集 activation checkpointing — 狀態：可用
+
+**題目**
+
+用 `ModelConfig(vocab_size=100, context_length=32, d_model=64, n_layers=n, n_heads=4, d_ff=172)`，batch 8，量 `n_layers` 為 2 與 6 時、開與不開 `activation_checkpoint` 的 activations 位元組數（排除參數）。checkpoint 之後每多一層多了幾位元組？和每一層的輸入大小比一比。
+
+**練習目標**：checkpoint 之後每層只存輸入。
+
+**批改重點**：開了 checkpoint，6 層減 2 層的差除以 4 正好是一個 `(8, 32, 64)` float32 張量，65536 位元組。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import cross_entropy
+from llmz.model import ModelConfig, TransformerLM
+from llmz.profile import saved_activation_bytes
+
+x = torch.randint(0, 100, (8, 33))
+result = {}
+for n in [2, 6]:
+    for flag in [False, True]:
+        torch.manual_seed(0)
+        model = TransformerLM(ModelConfig(vocab_size=100, context_length=32, d_model=64, n_layers=n,
+                                          n_heads=4, d_ff=172, activation_checkpoint=flag))
+        fn = lambda: cross_entropy(model(x[:, :-1]).reshape(-1, 100), x[:, 1:].reshape(-1))
+        result[n, flag] = saved_activation_bytes(fn, exclude=model.parameters())
+print(result)
+print((result[6, True] - result[2, True]) / 4, 8 * 32 * 64 * 4)
+```
+
+### 第 7 集 `torch.compile` — 狀態：不出題
+
+實測需要 MPS 或 CUDA，CPU 上編譯又慢又不具代表性。讀者想練習時，請他照正文在自己的 Mac 上量 RMSNorm 的 eager 與 compiled，並用第 1 集的頻寬算出「搬幾趟」對不對得上。
+
+### 第 8 集 arithmetic intensity — 狀態：可用
+
+**題目**
+
+算標準模型裡三個運算的 arithmetic intensity（float32）：`q_proj`（`(8192, 512) @ (512, 512)`）、`lm_head`（`(8192, 512) @ (512, 10000)`）、attention 的「分數 @ V」（一個 head，`(256, 256) @ (256, 32)`）。哪個在 M4 Max 上（分界點 37）卡在記憶體？
+
+**練習目標**：intensity = FLOPs ÷ 讀寫位元組。
+
+**批改重點**：約 124、230、13；分數 @ V 卡在記憶體，因為要讀整個 256 × 256 的分數矩陣，卻只輸出 32 維。
+
+**參考答案**
+
+```python
+def matmul_intensity(m, k, n, bytes_per=4):
+    return 2 * m * k * n / ((m * k + k * n + m * n) * bytes_per)
+
+
+print(f"q_proj {matmul_intensity(8192, 512, 512):.0f}")
+print(f"lm_head {matmul_intensity(8192, 512, 10000):.0f}")
+print(f"scores @ V {matmul_intensity(256, 256, 32):.0f}")
+```
+
+## 第 8 章 FlashAttention 的原理
+
+### 第 1 集 attention 的 O(T²) 記憶體 — 狀態：可用
+
+**題目**
+
+標準模型（batch 32、16 個 head、4 層）每一層的 attention 存了約兩個分數矩陣大小的 float32 資料。長度從 256 改成 1024 時，4 層的 attention 部分合計要存幾 GB？和第 7 章第 4 集量到的整個模型 3011 MB 比較。
+
+**練習目標**：\\( B \cdot H \cdot T^2 \cdot 4 \\) 位元組，長度變 4 倍、大小變 16 倍。
+
+**批改重點**：一個分數矩陣 2.15 GB，兩個乘 4 層約 17.2 GB，光這部分就是長度 256 時整個模型 activations 的 5 倍多。
+
+**參考答案**
+
+```python
+one = 32 * 16 * 1024 * 1024 * 4
+print(one / 1e9, "GB 一個分數矩陣")
+print(2 * 4 * one / 1e9, "GB 四層")
+print(round(2 * 4 * one / 3011e6, 1), "倍")
+```
+
+### 第 2 集 tiling — 狀態：可用
+
+**題目**
+
+把正文的分塊矩陣乘法改成支援不整除的情況：`A` 是 `(10, 7)`、`B` 是 `(7, 9)`、塊大小 4，驗證結果等於 `A @ B`。
+
+**練習目標**：分塊迴圈的三層索引；切片超出範圍時自動截短。
+
+**批改重點**：三層迴圈分別走 `A` 的列、`B` 的行、相乘的維度；累加器的形狀要用實際切到的大小，不能寫死 `(b, b)`。
+
+**參考答案**
+
+```python
+import torch
+
+torch.manual_seed(0)
+A = torch.randn(10, 7)
+B = torch.randn(7, 9)
+b = 4
+C = torch.zeros(10, 9)
+for i in range(0, 10, b):
+    for j in range(0, 9, b):
+        acc = torch.zeros(A[i : i + b].shape[0], B[:, j : j + b].shape[1])
+        for t in range(0, 7, b):
+            acc += A[i : i + b, t : t + b] @ B[t : t + b, j : j + b]
+        C[i : i + b, j : j + b] = acc
+print(torch.allclose(C, A @ B, atol=1e-6))
+```
+
+### 第 3 集 online softmax — 狀態：可用
+
+**題目**
+
+用 online softmax 的方式，一次讀 3 個，算出 `[1.0, 3.0, 2.0, 6.0, 0.0, 4.0, 5.0]` 的 logsumexp（\\( m + \log \ell \\)），並用 `llmz.functional.logsumexp` 驗證。
+
+**練習目標**：只維護 `m` 和 `l` 兩個數；最大值改變時乘上 `correction`。
+
+**批改重點**：三段的最大值依序是 3、6、6；結果約 6.4578。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import logsumexp
+
+x = torch.tensor([1.0, 3.0, 2.0, 6.0, 0.0, 4.0, 5.0])
+m = torch.tensor(float("-inf"))
+l = torch.tensor(0.0)
+for start in range(0, len(x), 3):
+    s = x[start : start + 3]
+    m_new = torch.maximum(m, s.max())
+    l = l * torch.exp(m - m_new) + torch.exp(s - m_new).sum()
+    m = m_new
+print(m + torch.log(l), logsumexp(x))
+```
+
+### 第 4 集 純 PyTorch 分塊 attention forward — 狀態：可用
+
+**題目**
+
+用 `flash_attention_forward` 算長度 100 的 causal attention，分別用 `block_q=block_k=16`、`32`、`100`，確認三種結果彼此相同（`allclose`），也和第 4 章的 attention 相同。
+
+**練習目標**：塊大小只影響計算順序，不影響結果。
+
+**批改重點**：四者 `allclose`；`block=100` 時只有一塊，等於一次算完。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import causal_mask, scaled_dot_product_attention
+from llmz.flash import flash_attention_forward
+
+torch.manual_seed(0)
+q, k, v = (torch.randn(1, 2, 100, 8) for _ in range(3))
+ref = scaled_dot_product_attention(q, k, v, causal_mask(100))
+for b in [16, 32, 100]:
+    o, _ = flash_attention_forward(q, k, v, True, block_q=b, block_k=b)
+    print(b, torch.allclose(o, ref, atol=1e-5))
+```
+
+### 第 5 集 backward 與 recompute — 狀態：可用
+
+**題目**
+
+驗證 \\( D_i = \sum_j P_{ij}\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
+
+**練習目標**：理解為什麼 backward 不需要整列的 `P` 也能算 \\( D \\)。
+
+**批改重點**：`(P * dP).sum(-1)` 與 `(do * O).sum(-1)` 相等。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+
+torch.manual_seed(0)
+q, k, v, do = (torch.randn(6, 4) for _ in range(4))
+P = softmax(q @ k.T / 2)
+O = P @ v
+dP = do @ v.T
+print(torch.allclose((P * dP).sum(-1), (do * O).sum(-1), atol=1e-6))
+```
+
+### 第 6 集 Triton 一瞥 — 狀態：不出題
+
+需要 NVIDIA 顯示卡。讀者有 GPU 而且想練習時，請他照正文的 RMSNorm kernel 寫一個「每列加上 1 再乘 2」的 kernel，和 PyTorch 的 `(x + 1) * 2` 比對。
+
+### 第 7 集 `F.scaled_dot_product_attention` 現況 — 狀態：可用
+
+**題目**
+
+在 CPU 上用 `F.scaled_dot_product_attention` 和 `llmz.flash.flash_attention` 算同一組 causal attention（長度 300），對同一個 loss 做 backward，比較 `q` 的梯度是否相同。
+
+**練習目標**：內建版本只拿來驗證；`grad` 要在兩次之間清掉。
+
+**批改重點**：`allclose` 為 `True`；忘記 `q.grad = None` 會得到兩次相加的梯度。
+
+**參考答案**
+
+```python
+import torch
+import torch.nn.functional as F
+
+from llmz.flash import flash_attention
+
+torch.manual_seed(0)
+q, k, v = (torch.randn(1, 2, 300, 16, requires_grad=True) for _ in range(3))
+flash_attention(q, k, v, True).pow(2).sum().backward()
+ours = q.grad.clone()
+q.grad = None
+F.scaled_dot_product_attention(q, k, v, is_causal=True).pow(2).sum().backward()
+print(torch.allclose(ours, q.grad, atol=1e-4))
+```
+
+## 第 9 章 平行化：原理與 CPU 模擬
+
+### 第 1 集 為什麼需要多卡 — 狀態：可用
+
+**題目**
+
+一個 130 億參數的模型用 AdamW 訓練，光參數、梯度、優化器狀態要幾 GB？至少要幾張 80 GB 的卡才放得下（假設可以完美切開）？
+
+**練習目標**：每個參數 16 位元組。
+
+**批改重點**：208 GB；至少 3 張（208 / 80 = 2.6，無條件進位）。
+
+**參考答案**
+
+```python
+import math
+
+size = 16 * 13e9
+print(size / 1e9, "GB")
+print(math.ceil(size / 80e9), "張")
+```
+
+### 第 2 集 Gloo 起 process — 狀態：可用
+
+**題目**
+
+用 `llmz.dist.launch` 起 3 個 process，每個 rank 印出 `rank ** 2`，輸出順序要固定。
+
+**練習目標**：函式定義在最外層、主程式放在 `if __name__ == "__main__":`、用 `print_in_order`。
+
+**批改重點**：輸出 0、1、4 依序出現；忘了 `__main__` 判斷會一直重複起 process 而出錯。
+
+**參考答案**
+
+```python
+from llmz.dist import launch, print_in_order
+
+
+def square(rank, world_size):
+    print_in_order(rank**2)
+
+
+if __name__ == "__main__":
+    launch(square, 3)
+```
+
+### 第 3 集 集合通訊 — 狀態：可用
+
+**題目**
+
+4 個 rank，每個 rank 有 `torch.tensor([rank + 1.0])`。不用 `dist.all_reduce`，只用 `dist.all_gather` 算出四個值的總和，印出來並和 `dist.all_reduce` 的結果比較。
+
+**練習目標**：all-gather 之後每個人都有全部的資料，可以自己加。
+
+**批改重點**：總和 10；這樣做每個人收了 \\( N - 1 \\) 份完整資料，比 ring all-reduce 傳得多。
+
+**參考答案**
+
+```python
+import torch
+import torch.distributed as dist
+
+from llmz.dist import launch, print_in_order
+
+
+def run(rank, world_size):
+    x = torch.tensor([rank + 1.0])
+    out = [torch.zeros(1) for _ in range(world_size)]
+    dist.all_gather(out, x)
+    total = sum(out)
+    dist.all_reduce(x)
+    print_in_order(total.item(), x.item())
+
+
+if __name__ == "__main__":
+    launch(run, 4)
+```
+
+### 第 4 集 naive DDP — 狀態：可用
+
+**題目**
+
+把正文的驗證改成 4 個 rank、batch 8（每個 rank 2 筆），確認梯度仍然和單機相同。
+
+**練習目標**：每個 rank 取 `ids[rank * 2 : rank * 2 + 2]`；all-reduce 後除以 world size。
+
+**批改重點**：四個 rank 都印 `True`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.dist import all_reduce_gradients, broadcast_parameters, launch, print_in_order
+from llmz.functional import cross_entropy
+from llmz.model import ModelConfig, TransformerLM
+
+CFG = ModelConfig(vocab_size=50, context_length=8, d_model=32, n_layers=2, n_heads=4, d_ff=64)
+
+
+def loss_of(model, ids):
+    return cross_entropy(model(ids[:, :-1]).reshape(-1, 50), ids[:, 1:].reshape(-1))
+
+
+def check(rank, world_size):
+    torch.manual_seed(0)
+    ids = torch.randint(0, 50, (8, 9))
+    torch.manual_seed(100)
+    single = TransformerLM(CFG)
+    torch.manual_seed(100 + rank)
+    model = TransformerLM(CFG)
+    broadcast_parameters(model)
+    loss_of(model, ids[rank * 2 : rank * 2 + 2]).backward()
+    all_reduce_gradients(model)
+    loss_of(single, ids).backward()
+    print_in_order(all(torch.allclose(p.grad, q.grad, atol=1e-6) for p, q in zip(model.parameters(), single.parameters())))
+
+
+if __name__ == "__main__":
+    launch(check, 4)
+```
+
+### 第 5 集 bucketing 與通訊重疊 — 狀態：可用
+
+**題目**
+
+建立標準模型的 `BucketedDDP`，bucket 大小分別設 5、25、100 MB，印出各有幾個 bucket。（只要建立就好，不用訓練；用 1 個 rank 即可。）
+
+**練習目標**：bucket 大小與數量的取捨。
+
+**批改重點**：bucket 越大數量越少；100 MB 大於全部梯度 90.8 MB，只剩 1 個。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.dist import BucketedDDP, launch
+from llmz.model import ModelConfig, TransformerLM
+
+
+def run(rank, world_size):
+    for mb in [5, 25, 100]:
+        torch.manual_seed(0)
+        print(mb, "MB：", len(BucketedDDP(TransformerLM(ModelConfig()), bucket_mb=mb).buckets), "個 bucket")
+
+
+if __name__ == "__main__":
+    launch(run, 1)
+```
+
+### 第 6 集 optimizer state sharding — 狀態：可用
+
+**題目**
+
+不起 process，模擬 `ShardedOptimizer` 的分配方式：把標準模型的參數從大到小，每個交給目前負責元素最少的 rank，分給 4 個 rank，印出每個 rank 負責的元素數。
+
+**練習目標**：大的先分、交給最少的人。
+
+**批改重點**：四個數字很接近（約 565 萬到 570 萬）；如果照原本順序輪流分，差距會大很多。
+
+**參考答案**
+
+```python
+from llmz.model import ModelConfig, TransformerLM
+
+sizes = sorted((p.numel() for p in TransformerLM(ModelConfig()).parameters()), reverse=True)
+load = [0] * 4
+for n in sizes:
+    load[load.index(min(load))] += n
+print(load)
+```
+
+### 第 7 集 FSDP 的想法 — 狀態：可用
+
+**題目**
+
+用正文的表格公式，算 700 億參數的模型在 64 張卡上，ZeRO 1、2、3 每張卡各要幾 GB（不算 activations）。哪幾種放得進 80 GB？
+
+**練習目標**：\\( 4\Psi + 4\Psi + 8\Psi/N \\) 等公式。
+
+**批改重點**：ZeRO 1 約 568.8 GB、ZeRO 2 約 293.1 GB、ZeRO 3 約 17.5 GB；只有 ZeRO 3 放得進。
+
+**參考答案**
+
+```python
+psi, n = 70e9, 64
+print(f"{(8 * psi + 8 * psi / n) / 1e9:.1f}")
+print(f"{(4 * psi + 12 * psi / n) / 1e9:.1f}")
+print(f"{16 * psi / n / 1e9:.1f}")
+```
+
+### 第 8 集 tensor / pipeline parallelism — 狀態：可用
+
+**題目**
+
+pipeline 有 8 個階段。至少要幾個 micro-batch，bubble 的閒置比例才會低於 10%？
+
+**練習目標**：\\( (p-1)/(m+p-1) \\)。
+
+**批改重點**：\\( 7/(m+7) < 0.1 \\)，\\( m > 63 \\)，所以至少 64 個。
+
+**參考答案**
+
+```python
+p = 8
+m = 1
+while (p - 1) / (m + p - 1) >= 0.1:
+    m += 1
+print(m)
+```
+
+### 第 9 集 通訊與計算的估算 — 狀態：可用
+
+**題目**
+
+用本機實測的 Gloo 頻寬 0.5 GB/s，以及 MPS 上約 10 TFLOPs 的計算速度（第 7 章第 1 集），算出每個 rank 每步至少要看多少 token，計算時間才會大於通訊時間（梯度用 float32，公式要改成什麼？）。
+
+**練習目標**：比值公式的推導，位元組數從 2 換成 4。
+
+**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
+
+**參考答案**
+
+```python
+flops = 10e12
+bandwidth = 0.5e9
+print(f"{flops / (0.75 * bandwidth):,.0f} 個 token")
+print(32 * 256, "個 token（第 5 章一步）")
+```
+
+## 第 10 章 Scaling laws
+
+### 第 1 集 什麼是 scaling law — 狀態：可用
+
+**題目**
+
+用 Kaplan 的 \\( L(N) = (N_c/N)^{0.076} \\)（\\( N_c = 8.8 \times 10^{13} \\)），算出 loss 從 3.0 降到 2.5，參數量要變成幾倍。
+
+**練習目標**：冪律的比例只和 loss 的比值有關。
+
+**批改重點**：\\( N_2 / N_1 = (L_1 / L_2)^{1/0.076} = 1.2^{13.16} \approx 11 \\) 倍；和 \\( N_c \\) 無關。
+
+**參考答案**
+
+```python
+alpha, n_c = 0.076, 8.8e13
+n1 = n_c / 3.0 ** (1 / alpha)
+n2 = n_c / 2.5 ** (1 / alpha)
+print(f"{n1:.2e} → {n2:.2e}，{n2 / n1:.1f} 倍")
+```
+
+### 第 2 集 Chinchilla 與 IsoFLOPs — 狀態：可用
+
+**題目**
+
+用 `chinchilla_loss`，比較同樣 \\( 10^{23} \\) FLOPs 下兩種分配：100 億參數，以及 1000 億參數。各看幾個 token？哪一個 loss 比較低？
+
+**練習目標**：\\( D = C / (6N) \\)；預算固定時大模型不一定比較好。
+
+**批改重點**：100 億參數看約 1.7 兆個 token、1000 億參數只看約 1700 億個；100 億的 loss 較低。
+
+**參考答案**
+
+```python
+from llmz.scaling import chinchilla_loss
+
+c = 1e23
+for n in [1e10, 1e11]:
+    d = c / (6 * n)
+    print(f"N = {n:.0e}  D = {d:.2e}  loss = {chinchilla_loss(n, d):.4f}")
+```
+
+### 第 3 集 擬合 IsoFLOPs 曲線 — 狀態：可用
+
+**題目**
+
+故意把掃描範圍放偏：\\( C = 10^{20} \\)，參數量只掃 \\( 10^{7} \\) 到 \\( 10^{8} \\) 的 9 個點（沒有雜訊）。用 `fit_isoflop_minimum` 擬合，和真正的最佳值（約 \\( 6.45 \times 10^8 \\)）比較，說明發生了什麼事。
+
+**練習目標**：最低點落在掃描範圍外時，拋物線外推不可靠。
+
+**批改重點**：9 個點的 loss 一路往下，最小的是範圍邊上的 \\( 10^8 \\)；拋物線的頂點約 \\( 2.9 \times 10^8 \\)，落在範圍外，和真正答案差了一倍多。正確的做法是往大的方向多掃幾個點。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import chinchilla_loss, fit_isoflop_minimum
+
+c = 1e20
+n = np.logspace(7, 8, 9)
+loss = chinchilla_loss(n, c / (6 * n))
+print(np.round(loss, 4))
+print(f"{fit_isoflop_minimum(n, loss):.2e}")
+```
+
+### 第 4 集 擬合冪律 — 狀態：可用
+
+**題目**
+
+不加雜訊，對 \\( 10^{18} \\) 到 \\( 10^{22} \\) 五個預算各用 `chinchilla_loss` 在密的格點上找到最佳 \\( N \\)，再用 `fit_power_law` 擬合指數，和 \\( \beta/(\alpha+\beta) \\) 比較。
+
+**練習目標**：沒有雜訊時，擬合應該幾乎完全吻合推導。
+
+**批改重點**：擬合出 0.4516，和 \\( 0.28 / 0.62 = 0.4516 \\) 一致到小數第四位。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import chinchilla_loss, fit_power_law
+
+budgets = np.array([1e18, 1e19, 1e20, 1e21, 1e22])
+grid = np.logspace(6, 12, 20000)
+best = [grid[np.argmin(chinchilla_loss(grid, c / (6 * grid)))] for c in budgets]
+k, a = fit_power_law(budgets, np.array(best))
+print(f"{a:.4f}", f"{0.28 / 0.62:.4f}")
+```
+
+### 第 5 集 Mac 上的迷你 scaling law — 狀態：可用
+
+**題目**
+
+用本集的結果表，把 \\( 3 \times 10^{14} \\) 的 d64 拿掉（只剩四個點）重新擬合。這個預算的最佳參數量、以及三個預算擬合出來的指數各變了多少？
+
+**練習目標**：體會少數幾個點的擬合對單一資料點有多敏感。
+
+**批改重點**：\\( 3 \times 10^{14} \\) 的頂點從 \\( 3.20 \times 10^6 \\) 移到 \\( 3.87 \times 10^6 \\)，差了兩成；指數只從 0.436 變成 0.434，因為三個點的直線主要由兩端的預算決定。中間的點不穩，指數看起來卻很穩，不代表指數可靠。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.scaling import fit_isoflop_minimum, fit_power_law
+
+n = {"d64": 746_816, "d128": 1_657_472, "d192": 3_248_448, "d256": 5_773_568, "d384": 14_461_824}
+results = {
+    1e14: {"d64": 2.6687, "d128": 2.5633, "d192": 2.5516, "d256": 2.7142},
+    3e14: {"d128": 2.2566, "d192": 2.1331, "d256": 2.1350, "d384": 2.4697},
+    1e15: {"d128": 2.0080, "d192": 1.8694, "d256": 1.8375, "d384": 1.9577},
+}
+best = [fit_isoflop_minimum([n[k] for k in losses], list(losses.values())) for losses in results.values()]
+k, a = fit_power_law(np.array(list(results)), np.array(best))
+print(f"{best[1]:.2e}", f"{a:.3f}")
+```
+
+### 第 6 集 限制與 μP 一瞥 — 狀態：可用
+
+**題目**
+
+Llama 3 8B 用了約 15 兆個 token 訓練。用 \\( C = 6ND \\) 算它的訓練計算量；如果改成每個參數 20 個 token 的 Chinchilla 最佳分配，同樣的計算量可以訓練多大的模型？
+
+**練習目標**：\\( C = 6ND \\) 與 \\( D = 20N \\) 聯立。
+
+**批改重點**：\\( C \approx 7.2 \times 10^{23} \\)；\\( 120 N^2 = C \\)，\\( N \approx 775 \\) 億。Meta 選擇了小得多的模型，換取推論便宜。
+
+**參考答案**
+
+```python
+c = 6 * 8e9 * 15e12
+print(f"{c:.1e} FLOPs")
+print(f"{(c / 120) ** 0.5:.2e} 個參數")
+```
+
+## 第 11 章 推論
+
+### 第 1 集 KV cache — 狀態：可用
+
+**題目**
+
+prompt 有 100 個 token，生成 156 個（剛好填滿 256 的 context）。沒有 cache、每一步重算整段時，模型一共處理幾個位置？是有 cache 時的幾倍？
+
+**練習目標**：重算的總量是等差數列的和。
+
+**批改重點**：\\( 100 + 101 + \cdots + 255 = 27690 \\) 個位置；有 cache 時 255 個（最後一個 token 不用再餵），約 109 倍。
+
+**參考答案**
+
+```python
+p, n = 100, 156
+naive = sum(range(p, p + n))
+print(naive, p + n - 1, f"{naive / (p + n - 1):.0f} 倍")
+```
+
+### 第 2 集 prefill 與 decode — 狀態：可用
+
+**題目**
+
+標準模型的一個 `Linear(512, 1344)`（float32）只算讀權重的位元組，餵進 \\( T \\) 個 token 時 arithmetic intensity 是多少？\\( T \\) 至少多大才超過 M4 Max 的平衡點 37 FLOPs/位元組？
+
+**練習目標**：intensity 約 \\( T/2 \\)，和矩陣大小無關。
+
+**批改重點**：\\( 2nT / 4n = T/2 \\)；\\( T = 1 \\) 是 0.5，\\( T \ge 74 \\) 才超過 37。
+
+**參考答案**
+
+```python
+n = 512 * 1344
+for t in [1, 64, 74, 256]:
+    print(t, 2 * n * t / (4 * n))
+```
+
+### 第 3 集 延遲與記憶體估算 — 狀態：可用
+
+**題目**
+
+用 Llama 3 8B（bfloat16）服務滿 8192 個 token 的序列。權重之外還有 16 GB 可以放 KV cache，能同時放幾條？如果它沒有用 GQA（32 個 KV head）呢？
+
+**練習目標**：KV cache 的公式與 GQA 的效果。
+
+**批改重點**：一條 1 GiB，16 GB 放得下 14 條；沒有 GQA 時一條 4 GiB，只放得下 3 條。
+
+**參考答案**
+
+```python
+kv_seq = 2 * 32 * 8 * 128 * 2 * 8192
+print(kv_seq / 2**30, "GiB")
+print(int(16e9 // kv_seq), "條（8 個 KV head）")
+print(int(16e9 // (kv_seq * 4)), "條（32 個 KV head）")
+```
+
+### 第 4 集 batching — 狀態：可用
+
+**題目**
+
+標準模型 decode 一步要讀全部權重，加上 batch 裡每條序列的 KV cache。cache 裡已有 128 個位置時，\\( B = 1 \\) 與 \\( B = 256 \\) 平均每生成一個 token 要讀多少位元組？cache 佔多少？
+
+**練習目標**：權重被 batch 分攤，cache 不會。
+
+**批改重點**：\\( B = 1 \\) 每個 token 92.88 MB，cache 只佔 2%；\\( B = 256 \\) 只要 2.45 MB，但 86% 是 cache。batch 大時瓶頸從權重移到 KV cache。
+
+**參考答案**
+
+```python
+weights = 22_696_448 * 4
+cache_seq = 2 * 4 * 16 * 32 * 4 * 128
+for b in [1, 256]:
+    per_token = (weights + b * cache_seq) / b
+    print(f"B={b}：每個 token 讀 {per_token / 1e6:.2f} MB，其中 cache 佔 {cache_seq / per_token:.0%}")
+```
+
+### 第 5 集 speculative decoding — 狀態：可用
+
+**題目**
+
+假設每個草稿 token 都以機率 \\( \alpha = 0.8 \\) 被接受（彼此獨立），每輪平均產生 \\( (1-\alpha^{k+1})/(1-\alpha) \\) 個 token；草稿模型一步的成本是目標模型的 \\( c = 0.25 \\) 倍。加速倍數約是「每輪 token 數 ÷ \\( (1 + kc) \\)」，\\( k \\) 從 1 到 8 哪一個最好？
+
+**練習目標**：\\( k \\) 太小猜得少，太大浪費在被拒絕的草稿上。
+
+**批改重點**：\\( k = 3 \\) 最好，約 1.69 倍；\\( k = 4 \\) 的 1.68 倍差不多，之後下降。
+
+**參考答案**
+
+```python
+alpha, c = 0.8, 0.25
+for k in range(1, 9):
+    tokens = (1 - alpha ** (k + 1)) / (1 - alpha)
+    print(k, f"{tokens:.2f}", f"{tokens / (1 + k * c):.2f}")
+```
+
+### 第 6 集 量化初探 — 狀態：可用
+
+**題目**
+
+做一個每列大小差到一千倍的矩陣，比較「整個矩陣只用一個縮放」與「每列一個縮放」的 int8 量化，看最小與最大那一列的相對誤差。
+
+**練習目標**：縮放的單位越大，小的值越容易被四捨五入成 0。
+
+**批改重點**：只用一個縮放時，最小那一列全部變成 0，相對誤差 1.000；每列一個縮放時兩列都在 1% 以內。提示：把矩陣 `reshape(1, -1)` 就能讓 `quantize` 只算一個縮放。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.inference import dequantize, quantize
+
+torch.manual_seed(0)
+w = torch.randn(64, 256) * torch.logspace(-3, 0, 64)[:, None]  # 每一列的大小差到一千倍
+per_tensor = quantize(w.reshape(1, -1), 8)  # 整個矩陣當成一列：只有一個縮放
+per_channel = quantize(w, 8)
+for name, (q, scale) in [("整個矩陣一個縮放", per_tensor), ("每列一個縮放", per_channel)]:
+    w_hat = dequantize(q, scale).reshape(w.shape)
+    rel = ((w_hat - w).abs().mean(dim=1) / w.abs().mean(dim=1))
+    print(f"{name}：最小那一列的相對誤差 {rel[0]:.3f}，最大那一列 {rel[-1]:.4f}")
+```
+
+### 第 7 集 MoE 與 attention 替代方案 — 狀態：可用
+
+**題目**
+
+一個像 Mixtral 8x7B 的模型：32 層、`d_model` 4096、`d_ff` 14336 的 SwiGLU 專家，每層 8 個、每個 token 用 2 個。只算專家的參數，總共多少？每個 token 用到多少？
+
+**練習目標**：MoE 的總參數與活躍參數。
+
+**批改重點**：每個專家 1.76 億；總共約 451 億，每個 token 用約 113 億。加上 attention 與 embedding，就接近 Mixtral 公布的 467 億與 129 億。
+
+**參考答案**
+
+```python
+d_model, d_ff, n_layers, n_experts, top_k = 4096, 14336, 32, 8, 2
+expert = 3 * d_model * d_ff
+print(f"每個專家 {expert:,}")
+print(f"全部專家 {expert * n_experts * n_layers / 1e9:.1f}B，每個 token 用 {expert * top_k * n_layers / 1e9:.1f}B")
+```
+
+## 附錄二
+
+### a CUDA 與 Triton 入門指引 — 狀態：可用
+
+**題目**
+
+用附錄二 a 的 CUDA 向量相加處理 1,000,000 個元素、每個 block 256 個 thread。要開幾個 block？最後一個 block 有幾個 thread 因為 `if (i < n)` 什麼都不做？全部一共幾個 warp？
+
+**練習目標**：grid、block、warp 的換算，以及為什麼 kernel 要檢查邊界。
+
+**批改重點**：3907 個 block（無條件進位）；最後一個 block 有 192 個 thread 閒著；共 31256 個 warp。沒有 `if (i < n)` 時，這 192 個 thread 會寫到陣列外面。
+
+**參考答案**
+
+```python
+n, threads = 1_000_000, 256
+blocks = (n + threads - 1) // threads
+print(blocks, "個 block，", blocks * threads - n, "個 thread 閒著")
+print(blocks * threads // 32, "個 warp")
+```
+
+### b 對照 CS336 A2、A3 — 狀態：不出題
+
+純對照表。
+
