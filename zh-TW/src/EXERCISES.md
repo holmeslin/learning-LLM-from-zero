@@ -2699,6 +2699,153 @@ for tag in ["select", "nav", "footer", "aside"]:
     print(f"{tag}：多丟 {before - after:,} 個字元")
 ```
 
+### 第 3 集 語言辨識 — 狀態：可用
+
+**題目**
+
+第 3 集的 `train_langid` 預設 `n=3`、`alpha=0.1`，是隨手選的。把 `n` 換成 1、2、3、4，`alpha` 換成 0.01、0.1、1.0，共 12 組，各自量三個數字：60 句測試句的正確數；在 318 頁「一半以上是韓文、漢字或西里爾字母」的網頁上，整頁分類與 `predict_lines` 逐行投票各對幾頁（正解用書寫系統判斷，做法見第 3 集）。`n=1`（只看單一字元）夠用嗎？哪一個設定你會選？
+
+**練習目標**：用 `NGramClassifier.train(samples, n, alpha)` 做超參數的比較，並看到「測試集全對」與「真實網頁上的表現」會給出不同的結論。
+
+**批改重點**：測試句在 `n >= 3` 時全對（60/60），`n = 1` 是 59/60（`alpha = 1.0` 時 56/60）；可是在 318 頁網頁上，整頁分類反而是 `n = 1` 最好（`alpha = 0.01` 時 280 頁，`n = 3`、`alpha = 0.1` 是 245 頁），`alpha` 愈大愈差；逐行投票幾乎不受影響（303 到 311 頁）。可能的原因：網頁上的中文字多半在訓練資料裡只出現一兩次，`n` 愈大，能對上的片段愈少；整頁分類又很容易被認得的英文片段拉走；逐行投票把後面這個問題擋掉了。注意這只是在這一份資料、這個代理的正解上量到的，不要說成「`n = 1` 永遠比較好」；選哪一組沒有標準答案，要能說明依據。提示：`alpha` 愈小，「這個語言看過、另一個語言沒看過」的片段，證據愈強。常見錯誤：只看測試句的結果就選 `n = 3`。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import NGramClassifier, load_langid_samples, read_pages
+
+SCRIPTS = {"han": (0x4E00, 0x9FFF), "kana": (0x3040, 0x30FF), "hangul": (0xAC00, 0xD7AF), "cyrillic": (0x0400, 0x04FF)}
+
+
+def expected_language(text):
+    letters = [ord(ch) for ch in text if ch.isalpha()]
+    s = {name: sum(lo <= c <= hi for c in letters) / max(len(letters), 1) for name, (lo, hi) in SCRIPTS.items()}
+    if s["hangul"] >= 0.5:
+        return "ko"
+    if s["han"] + s["kana"] >= 0.5:
+        return "ja" if s["kana"] >= 0.05 else "zh"
+    if s["cyrillic"] >= 0.5:
+        return "ru"
+
+
+train, test = load_langid_samples("train"), load_langid_samples("test")
+pages = [(p.text, expected_language(p.text)) for p in read_pages("data/cc/pages.jsonl")]
+pages = [(text, want) for text, want in pages if want]
+
+print(" n  alpha  測試句  整頁  逐行")
+for n in [1, 2, 3, 4]:
+    for alpha in [0.01, 0.1, 1.0]:
+        model = NGramClassifier.train(train, n, alpha)
+        sentences = sum(model.predict(t)[0] == lang for lang, ts in test.items() for t in ts)
+        whole = sum(model.predict(text)[0] == want for text, want in pages)
+        lines = sum(model.predict_lines(text) == want for text, want in pages)
+        print(f"{n:2d}  {alpha:5}  {sentences:3d}/60  {whole:3d}  {lines:3d}  (共 {len(pages)} 頁)")
+```
+
+M4 Max 上的輸出（每次相同）：
+
+```text
+ n  alpha  測試句  整頁  逐行
+ 1   0.01   59/60  280  311  (共 318 頁)
+ 1    0.1   59/60  272  310  (共 318 頁)
+ 1    1.0   56/60  245  311  (共 318 頁)
+ 2   0.01   59/60  257  309  (共 318 頁)
+ 2    0.1   59/60  250  310  (共 318 頁)
+ 2    1.0   59/60  223  306  (共 318 頁)
+ 3   0.01   60/60  248  309  (共 318 頁)
+ 3    0.1   60/60  245  309  (共 318 頁)
+ 3    1.0   60/60  213  304  (共 318 頁)
+ 4   0.01   60/60  246  308  (共 318 頁)
+ 4    0.1   60/60  240  309  (共 318 頁)
+ 4    1.0   60/60  207  303  (共 318 頁)
+```
+
+### 第 4 集 PII 遮蔽 — 狀態：可用
+
+**題目**
+
+Dolma 的規則是：一頁遮蔽了 6 個以上的 PII，整頁丟掉。在 817 頁網頁上，用 `mask_pii` 的次數，量門檻訂在「1、3、6、10 個以上」時，各丟幾頁、少了百分之幾的字元、帶走百分之幾的 PII。為什麼丟掉的頁數很少，字元卻少得比頁數的比例多很多？
+
+**練習目標**：把「遮蔽」與「整頁丟掉」兩種處理接在一起，並量一個門檻的代價。
+
+**批改重點**：1、3、6、10 個以上分別丟 190、51、14、4 頁（23.3%、6.2%、1.7%、0.5%），少 35.4%、17.2%、11.4%、8.4% 的字元，帶走 100%、68%、45%、34% 的 PII。丟掉的頁面比較長：門檻 6 個時，丟掉 1.7% 的頁面卻少了 11.4% 的字元，這 14 頁平均是全部頁面平均長度的約 6.7 倍（多半是長長的目錄或名單），所以字元的損失比例大於頁數的比例。提示：`mask_pii(text)` 回傳的字典，`sum(counts.values())` 是這一頁遮蔽了幾個。常見錯誤：用遮蔽後的文字長度算字元，結果和原文不一樣（標記比原文短）。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import mask_pii, read_pages
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+results = [mask_pii(p.text) for p in pages]
+n_pii = [sum(counts.values()) for _, counts in results]
+
+for limit in [1, 3, 6, 10]:
+    dropped = [i for i, n in enumerate(n_pii) if n >= limit]
+    chars_lost = sum(len(pages[i].text) for i in dropped)
+    pii_gone = sum(n_pii[i] for i in dropped)
+    print(
+        f"{limit:2d} 個以上整頁丟：丟 {len(dropped):3d} 頁（{len(dropped) / len(pages):.1%}），"
+        f"少 {chars_lost / sum(len(p.text) for p in pages):.1%} 的字元，帶走 {pii_gone / sum(n_pii):.0%} 的 PII"
+    )
+```
+
+### 第 5 集 有害內容分類 — 狀態：可用
+
+**題目**
+
+第 5 集的分類器是整句分類。Dolma 是逐句：把文件切成句子，只丟掉分數高於門檻的句子。寫 `drop_flagged(text, threshold)`，回傳 `(留下的文字, 丟掉幾句)`。用第 5 集的玩具分類器（可以縮小訓練資料，各 6 句）與一份 4 句的文件測試：三句正常、一句罵人（用 `blorf`）夾在中間。逐句丟與整頁丟，各剩幾個字元？
+
+**練習目標**：把句子層級的處理接在分類器後面，並比較兩種粒度保留多少資料。
+
+**批改重點**：文件的 4 句分數是 `-0.6`、`-1.0`、`1.32`、`-1.24`，門檻 `0.1` 丟掉第三句，留下 95 個字元；整頁丟則 0 個（文件原本 135 個）。用 `re.split(r"(?<=[.!?])\s+", text)` 切句；用 `" ".join` 接回去。提示：分數是 `score(text) = (ll["flagged"] - ll["ok"]) / 片段數`，不用 `predict` 的機率。常見錯誤：句子切在縮寫的句點（`Mr.`）而切錯，這個簡單的切法的限制，要先說出來。
+
+**參考答案**
+
+```python
+import re
+
+from llmz.pipeline import NGramClassifier, char_ngrams
+
+FLAGGED = [
+    "you are such a zorp, nobody wants you on this team",
+    "what a blorf, you lost us the game again",
+    "shut up you big snurgle and go away",
+    "stupid zorp, you ruin every match",
+    "go away you filthy snurgle, you are the worst",
+    "what a pathetic blorf you are",
+]
+OK = [
+    "good game everyone, that was a close match",
+    "nice shot, you saved us in the last round",
+    "can someone help me with the second level",
+    "thanks for the invite, this team is fun",
+    "the new map looks great, i love the colors",
+    "well played, see you all tomorrow",
+]
+model = NGramClassifier.train({"flagged": FLAGGED, "ok": OK})
+
+
+def score(text):
+    ll = model.log_likelihoods(text)
+    return (ll["flagged"] - ll["ok"]) / sum(char_ngrams(text, model.n).values())
+
+
+def drop_flagged(text, threshold=0.1):
+    """逐句分類：丟掉分數高於門檻的句子，回傳 (留下的文字, 丟掉幾句)。"""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if score(s) <= threshold]
+    return " ".join(kept), len(sentences) - len(kept)
+
+
+doc = (
+    "Good game everyone. Thanks for the invite, this team is fun. "
+    "What a pathetic blorf you are, go away. Well played, see you all tomorrow."
+)
+kept, dropped = drop_flagged(doc)
+print(f"丟掉 {dropped} 句，留下：{kept}")
+print(f"逐句丟：剩 {len(kept)} 個字元；整頁丟：剩 0 個字元（原本 {len(doc)} 個）")
+```
+
 ## 第 15 章 後訓練：RL 與可驗證獎勵
 
 ### 第 1 集 policy gradient 直覺 — 狀態：可用

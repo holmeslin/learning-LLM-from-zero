@@ -5,7 +5,9 @@
 
 import gzip
 import json
+import math
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from html.parser import HTMLParser
 from pathlib import Path
@@ -161,3 +163,140 @@ def read_pages(path: str | Path) -> Iterator[Page]:
         for line in f:
             yield Page(**json.loads(line))
 # ANCHOR_END: write_pages
+
+
+# ANCHOR: char_ngrams
+def char_ngrams(text: str, n: int = 3) -> Counter[str]:
+    """文字的 1～n 個字元的片段（n-gram）計數。大小寫不分；標點、數字、空白只當分隔；每一段前後各補一個空格。
+
+    「段」在英文是一個字，在中文是兩個標點之間的一串字（中文沒有空格）。補空格讓「字的開頭與結尾」也成為特徵。
+    """
+    grams: Counter[str] = Counter()
+    for chunk in re.sub(r"[\W\d_]+", " ", text.casefold()).split():
+        padded = f" {chunk} "
+        for k in range(1, n + 1):
+            grams.update(g for i in range(len(padded) - k + 1) if (g := padded[i : i + k]) != " ")
+    return grams
+# ANCHOR_END: char_ngrams
+
+
+# ANCHOR: ngram_classifier
+class NGramClassifier:
+    """字元 n-gram 的 naive Bayes：每個標籤各有一張「片段出現幾次」的表，用 log 機率加總打分。"""
+
+    def __init__(self, counts: dict[str, Counter[str]], n: int = 3, alpha: float = 0.1):
+        self.counts, self.n, self.alpha = counts, n, alpha
+        self.totals = {label: sum(c.values()) for label, c in counts.items()}
+        self.vocab = set().union(*counts.values())
+
+    @classmethod
+    def train(cls, samples: dict[str, Iterable[str]], n: int = 3, alpha: float = 0.1) -> "NGramClassifier":
+        counts = {label: Counter() for label in samples}
+        for label, texts in samples.items():
+            for text in texts:
+                counts[label].update(char_ngrams(text, n))
+        return cls(counts, n, alpha)
+
+    def log_likelihoods(self, text: str) -> dict[str, float]:
+        """每個標籤各一個分數：文字裡每個片段的 log P(片段 | 標籤) 加總。所有標籤都沒看過的片段直接略過。
+
+        P(片段 | 標籤) = (這個標籤看過幾次 + alpha) / (這個標籤總共看過幾個片段 + alpha × 詞彙表大小)；alpha 讓沒看過的片段不會是 0。
+        """
+        grams = {g: c for g, c in char_ngrams(text, self.n).items() if g in self.vocab}
+        extra = self.alpha * len(self.vocab)
+        return {
+            label: sum(c * math.log((counts[g] + self.alpha) / (self.totals[label] + extra)) for g, c in grams.items())
+            for label, counts in self.counts.items()
+        }
+
+    def predict(self, text: str) -> tuple[str, float]:
+        """回傳 (分數最高的標籤, 它的後驗機率)；後驗是各標籤分數的 softmax，先驗機率假設每個標籤一樣。
+
+        shortcut: 沒有任何看過的片段時回傳 ("unknown", 0.0)。naive Bayes 把每個片段當成互相獨立，
+        文字一長後驗就會被推到幾乎是 1，所以這個機率不能當成「有多確定」；要信心時改看每個片段的平均分數差。
+        """
+        scores = self.log_likelihoods(text)
+        if not any(scores.values()):
+            return "unknown", 0.0
+        best = max(scores, key=scores.get)
+        return best, 1 / sum(math.exp(s - scores[best]) for s in scores.values())
+
+    def predict_lines(self, text: str) -> str:
+        """一行一行分類再投票，每一行的票數是它的字母數；回傳得票最多的標籤。
+
+        一頁裡夾著別種語言的導覽列、程式碼時，整頁一起分類很容易被它們拉走；逐行投票讓大宗的語言贏。
+        """
+        votes: Counter[str] = Counter()
+        for line in text.splitlines():
+            label, _ = self.predict(line)
+            votes[label] += sum(ch.isalpha() for ch in line)
+        votes.pop("unknown", None)
+        return votes.most_common(1)[0][0] if votes else "unknown"
+
+    def save(self, path: str | Path) -> None:
+        data = {"n": self.n, "alpha": self.alpha, "counts": self.counts}
+        Path(path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "NGramClassifier":
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls({label: Counter(c) for label, c in data["counts"].items()}, data["n"], data["alpha"])
+# ANCHOR_END: ngram_classifier
+
+
+# ANCHOR: langid
+LANGID_PATH = Path(__file__).parent / "datasets" / "langid_samples.jsonl"
+
+
+def load_langid_samples(split: str = "train", path: str | Path = LANGID_PATH) -> dict[str, list[str]]:
+    """原創的多語短文，回傳 {語言代碼: [文字, ...]}。split 是 "train" 或 "test"。"""
+    samples: dict[str, list[str]] = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            if row["split"] == split:
+                samples.setdefault(row["lang"], []).append(row["text"])
+    return samples
+
+
+def train_langid(n: int = 3, alpha: float = 0.1) -> NGramClassifier:
+    return NGramClassifier.train(load_langid_samples("train"), n, alpha)
+# ANCHOR_END: langid
+
+
+# ANCHOR: mask_pii
+# re.ASCII：\w 與 \d 只算 ASCII，這樣「電話0912-000-111」貼在中文旁邊也認得出來
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}", re.ASCII)
+_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"  # 0～255，不接受 01 這種前導零
+IPV4_RE = re.compile(rf"(?<![\w.]){_OCTET}(?:\.{_OCTET}){{3}}(?!\w|\.\d)", re.ASCII)
+# 電話：「+」開頭的連續數字，或（國碼）、區碼、再加 2～4 組 2～4 位數，用空格、點或減號隔開（括號可有可無）。
+# 不算電話：開頭像日期（2026-11-03、03.11.2026）、前後緊貼著別的數字組（一長串數字的表格）、後面接「:數字」（時間）或「.數字」（小數）
+PHONE_RE = re.compile(
+    r"(?<![\w.+-])(?<!\d[ .-])(?!\d{4}[-./]\d{1,2}[-./]\d|\d{1,2}[-./]\d{1,2}[-./]\d{4}\b)"
+    r"(?:\+\d{9,15}|(?:\+\d{1,3}[ .-]?)?\(?\d{1,4}\)?(?:[ .-]\(?\d{2,4}\)?){2,4})(?![\w-]|[:. ]\d)",
+    re.ASCII,
+)
+PII_PATTERNS = [("email", EMAIL_RE, "<EMAIL>"), ("ip", IPV4_RE, "<IP>"), ("phone", PHONE_RE, "<PHONE>")]
+
+
+def mask_pii(text: str) -> tuple[str, dict[str, int]]:
+    """把 email、IPv4 與電話號碼換成 <EMAIL>、<IP>、<PHONE>。回傳 (遮蔽後的文字, 各類遮蔽了幾個)。
+
+    電話另外要求數字總共 9～15 個（E.164 的上限是 15），日期與短的數字串因此不會被誤遮蔽。
+    shortcut: 只認 IPv4 與有分隔的電話格式（沒有分隔的 0912000111 不算），不處理姓名與地址；要更準時換成專門的 PII 偵測工具。
+    """
+    counts = dict.fromkeys(("email", "phone", "ip"), 0)
+
+    def replacer(kind: str, token: str):
+        def sub(m: re.Match) -> str:
+            if kind == "phone" and not 9 <= sum(c.isdigit() for c in m.group()) <= 15:
+                return m.group()
+            counts[kind] += 1
+            return token
+
+        return sub
+
+    for kind, pattern, token in PII_PATTERNS:  # ip 要在 phone 前面：198.51.100.77 長得像電話
+        text = pattern.sub(replacer(kind, token), text)
+    return text, counts
+# ANCHOR_END: mask_pii

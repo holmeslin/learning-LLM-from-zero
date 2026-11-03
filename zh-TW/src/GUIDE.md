@@ -76,10 +76,10 @@
 | 第 11 章 | 推論 | `chapter11/` |
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 | 第 12 章（第 1～3 集） | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題 | `chapter12/` |
-| 第 13 章（第 1～2 集） | 資料：Common Crawl 與 WARC、HTML 轉文字 | `chapter13/` |
+| 第 13 章（第 1～5 集） | 資料：Common Crawl 與 WARC、HTML 轉文字、語言辨識、PII 遮蔽、有害內容分類 | `chapter13/` |
 | 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 
-還沒寫：第 12 章第 4、5 集，第 13 章第 3 集以後，第 14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 12 章第 4、5 集，第 13 章第 6 集以後，第 14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -198,8 +198,8 @@
 | 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
 | 第 12 章第 4、5 集 | 尚未出版 |
-| 第 13 章第 1～2 集 | Common Crawl 的 crawl、WARC／WAT／WET 三種格式、用 HTTP Range 下載 WARC 檔的前 32 MiB、WARC 記錄的結構（版本行、標頭、空行、`Content-Length` 個 byte、結尾 `\r\n\r\n`）與四種 `WARC-Type`（`warcinfo`／`request`／`response`／`metadata`）、每筆記錄是獨立的一段 gzip（截斷時丟掉最後一筆）、`gzip.open`／`gzip.compress`／`EOFError`、`llmz.pipeline`（`Page`（`NamedTuple`）、`iter_warc_records`、`split_http_response`、`decode_html`（HTTP 標頭與 `<meta>` 的 charset、`CHARSET_ALIASES`、U+FFFD、BOM）、`html_to_text`（`SKIP_TAGS`、`BLOCK_TAGS`、`skip_tags` 參數）、`iter_pages`、`write_pages`／`read_pages`）、`html.parser.HTMLParser`（`handle_starttag`／`handle_endtag`／`handle_data`、`feed`／`close`）、`for ... else`、JSON Lines（`json.dumps(ensure_ascii=False)`）、`urllib.parse.urlsplit`、`tools/prepare_webtext.py` 與 `data/cc/pages.jsonl`；M4 Max 實測：前 32 MiB 有 2,579 筆記錄、859 筆 response（狀態碼全是 200）、842 頁 HTML、817 個主機；什麼都不丟 20,368,432 個字元、丟 script 與 style 等 4,919,873、再丟 nav 等 4,413,284；817 頁有文字，存成 6,345,494 bytes |
-| 第 13 章第 3 集以後與第 14 章 | 尚未出版 |
+| 第 13 章第 1～5 集 | Common Crawl 的 crawl、WARC／WAT／WET 三種格式、用 HTTP Range 下載 WARC 檔的前 32 MiB、WARC 記錄的結構（版本行、標頭、空行、`Content-Length` 個 byte、結尾 `\r\n\r\n`）與四種 `WARC-Type`（`warcinfo`／`request`／`response`／`metadata`）、每筆記錄是獨立的一段 gzip（截斷時丟掉最後一筆）、`gzip.open`／`gzip.compress`／`EOFError`、`llmz.pipeline`（`Page`（`NamedTuple`）、`iter_warc_records`、`split_http_response`、`decode_html`（HTTP 標頭與 `<meta>` 的 charset、`CHARSET_ALIASES`、U+FFFD、BOM）、`html_to_text`（`SKIP_TAGS`、`BLOCK_TAGS`、`skip_tags` 參數）、`iter_pages`、`write_pages`／`read_pages`）、`html.parser.HTMLParser`（`handle_starttag`／`handle_endtag`／`handle_data`、`feed`／`close`）、`for ... else`、JSON Lines（`json.dumps(ensure_ascii=False)`）、`urllib.parse.urlsplit`、`tools/prepare_webtext.py` 與 `data/cc/pages.jsonl`；M4 Max 實測：前 32 MiB 有 2,579 筆記錄、859 筆 response（狀態碼全是 200）、842 頁 HTML、817 個主機；什麼都不丟 20,368,432 個字元、丟 script 與 style 等 4,919,873、再丟 nav 等 4,413,284；817 頁有文字，存成 6,345,494 bytes；`llmz.pipeline` 的 `char_ngrams`（1～3 個字元的片段、`casefold`、標點與數字當分隔、每段補空格）、`NGramClassifier`（字元 n-gram 的 naive Bayes：`train`／`log_likelihoods`／`predict`（後驗機率 softmax、`unknown`）／`predict_lines`（逐行投票）／`save`／`load`、`alpha` 平滑、`@classmethod`）、`load_langid_samples`／`train_langid`（`src/llmz/datasets/langid_samples.jsonl`：10 個語言的原創短文）、`mask_pii`（email、IPv4、電話的正規表示式與 look-around `(?<!…)`／`(?!…)`、`re.ASCII`、`Pattern.sub` 的函式、數字 9～15 個、`<EMAIL>`／`<PHONE>`／`<IP>`）；語言辨識是管線的第一道篩選（C4 的 `langdetect` 英文機率至少 0.99、Dolma 的英文分數至少 0.5）、naive Bayes 的後驗機率飽和（817 頁裡 812 頁超過 0.99）、整頁分類被導覽列與英文殘渣拉走（以非拉丁字母為主的 318 頁，整頁對 245 頁、逐行投票對 309 頁）、沒有標籤的語言被判成英文（越南文 11 頁全部、波蘭文 18 頁的 16 頁）、片段太少時不準；PII 的意義與 Dolma 的做法（遮蔽，6 個以上整頁丟掉）、817 頁遮蔽 327 個 email、256 個電話、4 個 IP（全是私有位址）、隨機抽 50 個電話約 45 個是真的；有害內容分類器的位置與三種做法（C4 字表、Gopher 的 SafeSearch、Dolma 的 fastText 分類器）、Dodge 等人與 Welbl 等人對過濾偏差的發現、玩具聊天室（發明的字 `zorp`／`blorf`／`snurgle`）上字表與分類器的比較、「每個片段平均的 log 機率差」當分數、門檻的取捨、訓練資料決定誤殺誰；本書的管線沒有有害內容這一步 |
+| 第 13 章第 6 集以後與第 14 章 | 尚未出版 |
 | 第 15 章第 1～3 集 | RL 的名詞（policy、reward、動作、平均獎勵 \\( J \\)）、多臂吃角子老虎機（bandit）、policy gradient \\( \nabla J = \mathbb{E}[R \nabla \log \pi(a)] \\)（log 導數技巧、softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`、抽樣估計的誤差約 \\( 1/\sqrt{n} \\)）、`llmz.rl`（`sample_actions`、`bandit_rewards`、`expected_reward`、`reinforce_loss`、`estimate_gradient`、`train_bandit`、`group_advantages`、`verifiable_rewards`、`train_groups`）、gradient ascent、REINFORCE（Williams 1992）與 baseline（不改變期望值、降低變異；批次平均把自己算進去所以縮小 \\( (n-1)/n \\)）、`torch.Generator().manual_seed`、GRPO 的組內平均 baseline 與除以標準差（樣本標準差、`eps`）、全組獎勵相同時 advantage 是 0、一組 \\( G \\) 個回答至少一個答對的機率 \\( 1-(1-p)^G \\)、玩具題 RLVR（3 個 prompt、答對機率 50%／10%／1%；除以標準差時困難題 400 步 0.96～0.98，不除只有 0.02～0.03） |
 | 第 15 章第 4 集以後 | 尚未出版 |
 
@@ -318,6 +318,9 @@
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
 | Common Crawl、WARC 記錄、`iter_warc_records`、`split_http_response`、`data/cc/sample.warc.gz` | 第 13 章第 1 集 | 只用 TinyStories，不談網頁資料 |
 | `decode_html`、`html.parser`、`html_to_text`、`iter_pages`、`data/cc/pages.jsonl` | 第 13 章第 2 集 | 不談網頁轉文字 |
+| 字元 n-gram、naive Bayes、`char_ngrams`、`NGramClassifier`、`train_langid`、`predict_lines`、語言辨識 | 第 13 章第 3 集 | 不談語言辨識 |
+| PII、`mask_pii`、look-around、`<EMAIL>`／`<PHONE>`／`<IP>` | 第 13 章第 4 集 | 不談個資遮蔽 |
+| 有害內容分類器、字表過濾、門檻與誤殺、`NGramClassifier` 當二分類器 | 第 13 章第 5 集 | 只說「有一個篩選有害內容的步驟」，不談分數與門檻 |
 | policy、reward、bandit、policy gradient、`reinforce_loss`、`estimate_gradient` | 第 15 章第 1 集 | 只說「用獎勵訓練模型」，不談梯度怎麼來 |
 | REINFORCE、`train_bandit`、baseline 與變異 | 第 15 章第 2 集 | 不談 baseline |
 | GRPO、`group_advantages`、`verifiable_rewards`、`train_groups`、是否除以標準差 | 第 15 章第 3 集 | 只說 advantage 是獎勵減 baseline |
