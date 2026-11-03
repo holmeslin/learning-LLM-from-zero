@@ -76,8 +76,9 @@
 | 第 11 章 | 推論 | `chapter11/` |
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 | 第 12 章（第 1～3 集） | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題 | `chapter12/` |
+| 第 13 章（第 1～2 集） | 資料：Common Crawl 與 WARC、HTML 轉文字 | `chapter13/` |
 
-還沒寫：第 12 章第 4、5 集，以及第 13～15 章。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 12 章第 4、5 集，第 13 章第 3 集以後，以及第 14、15 章。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -195,7 +196,9 @@
 | 第 11 章 | KV cache 的原理（舊位置的 k、v 不變）、`llmz.inference`（`KVCache`（預先配置 `(n_layers, B, H, max_len, d_head)`、`length`、`nbytes`）、`attention_cached`（RoPE 位置從 `cache.length` 接續、對整個 cache 做 attention 並用 mask 遮掉，形狀固定）、`forward_cached`（只支援 pre-norm、總長不超過 `context_length`）、`pick_next`、`generate_cached`、`to_probs`、`accept_or_resample`、`speculative_generate`（兩個 cache、退回 `length`）、`quantize`／`dequantize`（對稱、per-channel 與分組）、`quantize_model_`（模擬量化））、prefill 與 decode（compute-bound 與 memory-bound、intensity 約 \\( T/2 \\)）、`statistics.median`、推論記憶體（權重 + KV cache）與 decode 下限（權重位元組 ÷ 頻寬）、Llama 3 8B 的設定與 GQA／MQA、batching（M4 Max 實測）與 padding／continuous batching／PagedAttention、speculative decoding 的接受規則與實測、`for ... else`、量化的離群值與分組（實測 int8／int4／int3／int2 的 loss）、MoE（router、top-k、`torch.topk`、`torch.where`、`torch.bincount`、輔助 loss）、MLA、sliding window、線性 attention 與 state space model |
 | 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
-| 第 12 章第 4 集以後 | 尚未出版 |
+| 第 12 章第 4、5 集 | 尚未出版 |
+| 第 13 章第 1～2 集 | Common Crawl 的 crawl、WARC／WAT／WET 三種格式、用 HTTP Range 下載 WARC 檔的前 32 MiB、WARC 記錄的結構（版本行、標頭、空行、`Content-Length` 個 byte、結尾 `\r\n\r\n`）與四種 `WARC-Type`（`warcinfo`／`request`／`response`／`metadata`）、每筆記錄是獨立的一段 gzip（截斷時丟掉最後一筆）、`gzip.open`／`gzip.compress`／`EOFError`、`llmz.pipeline`（`Page`（`NamedTuple`）、`iter_warc_records`、`split_http_response`、`decode_html`（HTTP 標頭與 `<meta>` 的 charset、`CHARSET_ALIASES`、U+FFFD、BOM）、`html_to_text`（`SKIP_TAGS`、`BLOCK_TAGS`、`skip_tags` 參數）、`iter_pages`、`write_pages`／`read_pages`）、`html.parser.HTMLParser`（`handle_starttag`／`handle_endtag`／`handle_data`、`feed`／`close`）、`for ... else`、JSON Lines（`json.dumps(ensure_ascii=False)`）、`urllib.parse.urlsplit`、`tools/prepare_webtext.py` 與 `data/cc/pages.jsonl`；M4 Max 實測：前 32 MiB 有 2,579 筆記錄、859 筆 response（狀態碼全是 200）、842 頁 HTML、817 個主機；什麼都不丟 20,368,432 個字元、丟 script 與 style 等 4,919,873、再丟 nav 等 4,413,284；817 頁有文字，存成 6,345,494 bytes |
+| 第 13 章第 3 集以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -310,6 +313,8 @@
 | perplexity 的單位、bits per byte、領域與 greedy 的陷阱 | 第 12 章第 1 集 | 只看 perplexity 或 loss |
 | benchmark、`load_mcq`、zero-shot 與 few-shot、`build_prompt`、亂猜的雜訊 | 第 12 章第 2 集 | 不談評測 |
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
+| Common Crawl、WARC 記錄、`iter_warc_records`、`split_http_response`、`data/cc/sample.warc.gz` | 第 13 章第 1 集 | 只用 TinyStories，不談網頁資料 |
+| `decode_html`、`html.parser`、`html_to_text`、`iter_pages`、`data/cc/pages.jsonl` | 第 13 章第 2 集 | 不談網頁轉文字 |
 
 ---
 

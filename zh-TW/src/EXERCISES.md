@@ -2631,3 +2631,70 @@ alphas = [i / 20 for i in range(21)]  # 0, 0.05, ..., 1
 flip = next(a for a in alphas if pick_choice(logprobs, lengths**a) == 1)
 print(f"alpha = {flip} 時第一次改選第二個選項（精確的門檻 {math.log(1.2) / math.log(4):.4f}）")
 ```
+
+## 第 13 章 資料：從網頁到訓練集
+
+### 第 1 集 Common Crawl 與 WARC — 狀態：可用
+
+**題目**
+
+WARC 檔裡每一筆記錄都是自己的一段 gzip，所以知道一筆記錄在檔案裡的起點（offset）與長度（length），就能只讀那一段，不必從頭讀。自己造一個 3 筆記錄的 `.warc.gz`（記錄內容自己編），記下每一段壓縮後的長度，寫一個函式 `read_at(path, offset, length)`：只讀檔案裡那一段 byte，用 `gzip.decompress` 解開，回傳記錄的原始 bytes。用它單獨讀出第 2 筆，印出它的 `WARC-Type`。
+
+**練習目標**：每筆記錄是獨立的 gzip 段，所以能用 Range 只取一筆；Common Crawl 的索引就是這樣用的。
+
+**批改重點**：第 2 筆的 offset 是前面所有段的壓縮後長度加起來，length 是它自己壓縮後的長度（不是解壓縮後的長度）；用 `f.seek(offset)` 與 `f.read(length)` 讀；讀出來的是 `WARC-Type: request`。提示：`gzip.compress` 回傳的 bytes 長度就是這一段在檔案裡佔的長度。常見錯誤：把整個檔案餵給 `gzip.decompress`，得到的是全部記錄接在一起。
+
+**參考答案**
+
+```python
+import gzip
+
+
+def read_at(path, offset, length):
+    with open(path, "rb") as f:
+        f.seek(offset)
+        return gzip.decompress(f.read(length))  # 這一段自己就是完整的 gzip
+
+
+members = []
+for warc_type in ["warcinfo", "request", "response"]:
+    body = f"toy {warc_type} content".encode()
+    head = f"WARC/1.0\r\nWARC-Type: {warc_type}\r\nContent-Length: {len(body)}\r\n\r\n".encode()
+    members.append(gzip.compress(head + body + b"\r\n\r\n"))
+with open("toy.warc.gz", "wb") as f:
+    f.write(b"".join(members))
+
+offset, length = len(members[0]), len(members[1])  # 第 2 筆：前面各段的長度加起來，就是它的起點
+record = read_at("toy.warc.gz", offset, length)
+print(f"offset {offset}，length {length}")
+print(record.split(b"\r\n")[1].decode())
+```
+
+### 第 2 集 HTML 轉文字 — 狀態：可用
+
+**題目**
+
+先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/sample.warc.gz`。用 `html_to_text` 的 `skip_tags` 參數，量出 `select`、`nav`、`footer`、`aside` 各自單獨加進 `{"script", "style", "noscript", "template", "svg", "iframe", "title"}` 之後，在那 842 頁 HTML 上多丟了幾個字元。哪一個標籤丟得最多？四個數字加起來，和第 2 集「一起丟」多丟的 506,589 個字元一樣嗎？為什麼？
+
+**練習目標**：用 `skip_tags` 參數做消融實驗，並看到標籤會巢狀、互相重疊。
+
+**批改重點**：`select` 125,562、`nav` 149,723、`footer` 117,575、`aside` 170,507 個字元，`aside` 最多；四個加起來是 563,367，比一起丟的 506,589 多。因為標籤可以巢狀（例如 `footer` 裡面再放一個 `nav`）：同一段文字在兩個要丟的標籤裡面時，各自單獨量每個都算了一次，一起丟時只算一次。提示：`html_to_text(html, skip_tags=...)`，集合可以用 `base | {tag}` 加一個標籤。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import decode_html, html_to_text, iter_warc_records, split_http_response
+
+htmls = []
+for headers, body in iter_warc_records("data/cc/sample.warc.gz"):
+    if headers["warc-type"] == "response":
+        status, http_headers, payload = split_http_response(body)
+        if status == 200 and "html" in http_headers.get("content-type", "").lower():
+            htmls.append(decode_html(payload, http_headers["content-type"]))
+
+base = {"script", "style", "noscript", "template", "svg", "iframe", "title"}
+before = sum(len(html_to_text(h, base)) for h in htmls)
+for tag in ["select", "nav", "footer", "aside"]:
+    after = sum(len(html_to_text(h, base | {tag})) for h in htmls)
+    print(f"{tag}：多丟 {before - after:,} 個字元")
+```
