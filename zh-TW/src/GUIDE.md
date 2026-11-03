@@ -71,8 +71,9 @@
 | 附錄一 | MLX、einops、常見錯誤、CS336 A1 對照、雲端 GPU | `appendix1/` |
 | 第 7 章 | 效能分析與記憶體 | `chapter7/` |
 | 第 8 章 | FlashAttention 的原理 | `chapter8/` |
+| 第 9 章 | 平行化：原理與 CPU 模擬 | `chapter9/` |
 
-還沒寫：第二部的第 9～11 章、附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第二部的第 10、11 章、附錄二，與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -185,7 +186,8 @@
 | 附錄一 | MLX 的概念對照（不裝）、`einops` 的 `rearrange`／`reduce`／`repeat`／`einsum`（只在附錄）、常見錯誤訊息對照、CS336 A1 對照表、雲端 GPU 的流程 |
 | 第 7 章 | 記憶體階層與 M4 Max 實測頻寬（279 GB/s）與算力（10.3 TFLOPs）、`numel() * element_size()`、`llmz.profile`（`sync`、`timeit`（warmup、前後同步、取平均）、`saved_activation_bytes`（`saved_tensors_hooks`、`exclude`）、`estimate_memory`）、`torch.profiler`（`profile`、`record_function`、`key_averages().table`）、訓練記憶體四塊與 activations 的規律（跟 batch、層數成正比，attention 跟長度平方成正比）、float16／bfloat16 的範圍與精度、`torch.autocast` 與 `.float()` 算 loss、activation checkpointing（`torch.utils.checkpoint.checkpoint`、`ModelConfig(activation_checkpoint=True)`、`--activation_checkpoint`、`self.training`）、`torch.compile` 的融合原理與代價、arithmetic intensity 與 roofline |
 | 第 8 章 | 分數矩陣 `(B, H, T, T)` 的 \\( O(T^2) \\) 記憶體（第 4 章的 attention 存約兩個分數矩陣）、分塊矩陣乘法與讀取量 \\( 2n^3/b \\)、online softmax（`m`、`l`、`acc` 與 `correction = exp(m - m_new)`、logsumexp = \\( m + \log \ell \\)）、`llmz.flash`（`flash_attention_forward`（回傳 `o` 與 `lse`、causal 跳塊與對角線遮罩、`new_zeros`／`new_full`）、`flash_attention_backward`（\\( dV, dP, dS, dQ, dK \\) 公式、\\( D = \text{rowsum}(dO \circ O) \\)、用 lse 重算 \\( P \\)）、`FlashAttention`（`torch.autograd.Function`、`ctx.save_for_backward`、`.apply`）、`flash_attention`）、backward 記憶體從平方變線性、Triton 的程式模型（只讀不跑）、`F.scaled_dot_product_attention` 的各種實作與 CPU／MPS 實測 |
-| 第 9 章以後 | 尚未出版 |
+| 第 9 章 | 多卡的記憶體與時間估算、四種分法、rank／world size、`torch.multiprocessing.spawn`、`dist.init_process_group("gloo", ...)`、`dist.barrier`、`llmz.dist`（`launch`、`print_in_order`、`ring_all_reduce`（`isend`／`recv`、`chunk` 的 view）、`broadcast_parameters`、`all_reduce_gradients`、`BucketedDDP`（`register_post_accumulate_grad_hook`、`async_op=True` 與 `.wait()`、25 MB bucket）、`ShardedOptimizer`（大的先分、`optimizer_cls` 與 `**kwargs`））、`dist.broadcast`／`all_reduce`／`all_gather`／`reduce_scatter`／`all_gather_into_tensor`／`reduce_scatter_tensor`、all-reduce = reduce-scatter + all-gather、ring 的通訊量 \\( 2(N-1)/N \cdot S \\)、ZeRO 1／2／3 與 FSDP 的記憶體與通訊、tensor parallel 的 column／row 切法、pipeline 的 micro-batch 與 bubble \\( (p-1)/(m+p-1) \\)、計算與通訊的比值 \\( 1.5\,BT\cdot\text{BW}/F \\)、M4 Max 上 Gloo 約 0.5～0.65 GB/s |
+| 第 10 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -275,7 +277,15 @@
 | attention 的 backward 公式、`torch.autograd.Function`、`flash_attention` | 第 8 章第 5 集 | 交給 autograd |
 | Triton | 第 8 章第 6 集 | 不談 GPU kernel |
 | `F.scaled_dot_product_attention` 的實作選擇（只用來比較） | 第 8 章第 7 集 | 只用來驗證第 4 章的結果 |
-| 第二部其餘內容（平行化、scaling law、推論） | 第 9 章起 | 不談 |
+| 多 process、rank、`launch`、`print_in_order`、`dist.barrier` | 第 9 章第 2 集 | 單一 process |
+| 集合通訊、`ring_all_reduce`、`isend`／`recv` | 第 9 章第 3 集 | 不通訊 |
+| DDP、`broadcast_parameters`、`all_reduce_gradients` | 第 9 章第 4 集 | 單機訓練 |
+| `BucketedDDP`、鉤子與非同步通訊 | 第 9 章第 5 集 | 用 naive DDP |
+| `ShardedOptimizer`、ZeRO | 第 9 章第 6 集 | 每個 rank 完整的優化器 |
+| FSDP、`all_gather_into_tensor`、`reduce_scatter_tensor` | 第 9 章第 7 集 | 只切優化器狀態 |
+| tensor／pipeline parallel | 第 9 章第 8 集 | 只用 data parallel |
+| 通訊與計算的比值估算 | 第 9 章第 9 集 | 只估計算量 |
+| 第二部其餘內容（scaling law、推論） | 第 10 章起 | 不談 |
 
 ---
 

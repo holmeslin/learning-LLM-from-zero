@@ -2031,3 +2031,234 @@ q.grad = None
 F.scaled_dot_product_attention(q, k, v, is_causal=True).pow(2).sum().backward()
 print(torch.allclose(ours, q.grad, atol=1e-4))
 ```
+
+## 第 9 章 平行化：原理與 CPU 模擬
+
+### 第 1 集 為什麼需要多卡 — 狀態：可用
+
+**題目**
+
+一個 130 億參數的模型用 AdamW 訓練，光參數、梯度、優化器狀態要幾 GB？至少要幾張 80 GB 的卡才放得下（假設可以完美切開）？
+
+**練習目標**：每個參數 16 位元組。
+
+**批改重點**：208 GB；至少 3 張（208 / 80 = 2.6，無條件進位）。
+
+**參考答案**
+
+```python
+import math
+
+size = 16 * 13e9
+print(size / 1e9, "GB")
+print(math.ceil(size / 80e9), "張")
+```
+
+### 第 2 集 Gloo 起 process — 狀態：可用
+
+**題目**
+
+用 `llmz.dist.launch` 起 3 個 process，每個 rank 印出 `rank ** 2`，輸出順序要固定。
+
+**練習目標**：函式定義在最外層、主程式放在 `if __name__ == "__main__":`、用 `print_in_order`。
+
+**批改重點**：輸出 0、1、4 依序出現；忘了 `__main__` 判斷會一直重複起 process 而出錯。
+
+**參考答案**
+
+```python
+from llmz.dist import launch, print_in_order
+
+
+def square(rank, world_size):
+    print_in_order(rank**2)
+
+
+if __name__ == "__main__":
+    launch(square, 3)
+```
+
+### 第 3 集 集合通訊 — 狀態：可用
+
+**題目**
+
+4 個 rank，每個 rank 有 `torch.tensor([rank + 1.0])`。不用 `dist.all_reduce`，只用 `dist.all_gather` 算出四個值的總和，印出來並和 `dist.all_reduce` 的結果比較。
+
+**練習目標**：all-gather 之後每個人都有全部的資料，可以自己加。
+
+**批改重點**：總和 10；這樣做每個人收了 \\( N - 1 \\) 份完整資料，比 ring all-reduce 傳得多。
+
+**參考答案**
+
+```python
+import torch
+import torch.distributed as dist
+
+from llmz.dist import launch, print_in_order
+
+
+def run(rank, world_size):
+    x = torch.tensor([rank + 1.0])
+    out = [torch.zeros(1) for _ in range(world_size)]
+    dist.all_gather(out, x)
+    total = sum(out)
+    dist.all_reduce(x)
+    print_in_order(total.item(), x.item())
+
+
+if __name__ == "__main__":
+    launch(run, 4)
+```
+
+### 第 4 集 naive DDP — 狀態：可用
+
+**題目**
+
+把正文的驗證改成 4 個 rank、batch 8（每個 rank 2 筆），確認梯度仍然和單機相同。
+
+**練習目標**：每個 rank 取 `ids[rank * 2 : rank * 2 + 2]`；all-reduce 後除以 world size。
+
+**批改重點**：四個 rank 都印 `True`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.dist import all_reduce_gradients, broadcast_parameters, launch, print_in_order
+from llmz.functional import cross_entropy
+from llmz.model import ModelConfig, TransformerLM
+
+CFG = ModelConfig(vocab_size=50, context_length=8, d_model=32, n_layers=2, n_heads=4, d_ff=64)
+
+
+def loss_of(model, ids):
+    return cross_entropy(model(ids[:, :-1]).reshape(-1, 50), ids[:, 1:].reshape(-1))
+
+
+def check(rank, world_size):
+    torch.manual_seed(0)
+    ids = torch.randint(0, 50, (8, 9))
+    torch.manual_seed(100)
+    single = TransformerLM(CFG)
+    torch.manual_seed(100 + rank)
+    model = TransformerLM(CFG)
+    broadcast_parameters(model)
+    loss_of(model, ids[rank * 2 : rank * 2 + 2]).backward()
+    all_reduce_gradients(model)
+    loss_of(single, ids).backward()
+    print_in_order(all(torch.allclose(p.grad, q.grad, atol=1e-6) for p, q in zip(model.parameters(), single.parameters())))
+
+
+if __name__ == "__main__":
+    launch(check, 4)
+```
+
+### 第 5 集 bucketing 與通訊重疊 — 狀態：可用
+
+**題目**
+
+建立標準模型的 `BucketedDDP`，bucket 大小分別設 5、25、100 MB，印出各有幾個 bucket。（只要建立就好，不用訓練；用 1 個 rank 即可。）
+
+**練習目標**：bucket 大小與數量的取捨。
+
+**批改重點**：bucket 越大數量越少；100 MB 大於全部梯度 90.8 MB，只剩 1 個。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.dist import BucketedDDP, launch
+from llmz.model import ModelConfig, TransformerLM
+
+
+def run(rank, world_size):
+    for mb in [5, 25, 100]:
+        torch.manual_seed(0)
+        print(mb, "MB：", len(BucketedDDP(TransformerLM(ModelConfig()), bucket_mb=mb).buckets), "個 bucket")
+
+
+if __name__ == "__main__":
+    launch(run, 1)
+```
+
+### 第 6 集 optimizer state sharding — 狀態：可用
+
+**題目**
+
+不起 process，模擬 `ShardedOptimizer` 的分配方式：把標準模型的參數從大到小，每個交給目前負責元素最少的 rank，分給 4 個 rank，印出每個 rank 負責的元素數。
+
+**練習目標**：大的先分、交給最少的人。
+
+**批改重點**：四個數字很接近（約 565 萬到 570 萬）；如果照原本順序輪流分，差距會大很多。
+
+**參考答案**
+
+```python
+from llmz.model import ModelConfig, TransformerLM
+
+sizes = sorted((p.numel() for p in TransformerLM(ModelConfig()).parameters()), reverse=True)
+load = [0] * 4
+for n in sizes:
+    load[load.index(min(load))] += n
+print(load)
+```
+
+### 第 7 集 FSDP 的想法 — 狀態：可用
+
+**題目**
+
+用正文的表格公式，算 700 億參數的模型在 64 張卡上，ZeRO 1、2、3 每張卡各要幾 GB（不算 activations）。哪幾種放得進 80 GB？
+
+**練習目標**：\\( 4\Psi + 4\Psi + 8\Psi/N \\) 等公式。
+
+**批改重點**：ZeRO 1 約 568.8 GB、ZeRO 2 約 293.1 GB、ZeRO 3 約 17.5 GB；只有 ZeRO 3 放得進。
+
+**參考答案**
+
+```python
+psi, n = 70e9, 64
+print(f"{(8 * psi + 8 * psi / n) / 1e9:.1f}")
+print(f"{(4 * psi + 12 * psi / n) / 1e9:.1f}")
+print(f"{16 * psi / n / 1e9:.1f}")
+```
+
+### 第 8 集 tensor / pipeline parallelism — 狀態：可用
+
+**題目**
+
+pipeline 有 8 個階段。至少要幾個 micro-batch，bubble 的閒置比例才會低於 10%？
+
+**練習目標**：\\( (p-1)/(m+p-1) \\)。
+
+**批改重點**：\\( 7/(m+7) < 0.1 \\)，\\( m > 63 \\)，所以至少 64 個。
+
+**參考答案**
+
+```python
+p = 8
+m = 1
+while (p - 1) / (m + p - 1) >= 0.1:
+    m += 1
+print(m)
+```
+
+### 第 9 集 通訊與計算的估算 — 狀態：可用
+
+**題目**
+
+用本機實測的 Gloo 頻寬 0.5 GB/s，以及 MPS 上約 10 TFLOPs 的計算速度（第 7 章第 1 集），算出每個 rank 每步至少要看多少 token，計算時間才會大於通訊時間（梯度用 float32，公式要改成什麼？）。
+
+**練習目標**：比值公式的推導，位元組數從 2 換成 4。
+
+**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
+
+**參考答案**
+
+```python
+flops = 10e12
+bandwidth = 0.5e9
+print(f"{flops / (0.75 * bandwidth):,.0f} 個 token")
+print(32 * 256, "個 token（第 5 章一步）")
+```
