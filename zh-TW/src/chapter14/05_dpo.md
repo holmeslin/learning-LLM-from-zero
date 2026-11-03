@@ -275,7 +275,10 @@ uv run tools/dpo.py --out_dir runs/dpo_seed1 --seed 1
 
 ```bash
 uv run tools/dpo.py --out_dir runs/dpo_beta1 --beta 1.0
+uv run tools/dpo.py --out_dir runs/dpo_beta1_seed1 --beta 1.0 --seed 1
 ```
+
+其他的 \\( \beta \\) 同樣換 `--beta`、`--seed` 與 `--out_dir`。
 
 | \\( \beta \\) | 種子 | 合計 | `subtract` | `count` | `color` | `who` | `chosen`／`rejected` 平均 log 機率 | 回覆在候選裡 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -307,7 +310,7 @@ uv run tools/dpo.py --out_dir runs/dpo_lr1e-4 --lr_max 1e-4 --lr_min 1e-5 --max_
 
 `color` 與 `who` 的偏好比例是 100.0%／100.0%，但 `chosen` 的平均 log 機率是 \\( -12.18 \\)、`rejected` 是 \\( -82.51 \\)，greedy 的回覆只有 199／1000 落在候選裡，合計答對 199／1000（`color` 199／199，其他題型全部 0）。兩個回答的差拉得很開，但兩個都已經不是模型會寫的東西了。**偏好比例只比較同一題的兩個回答，沒有檢查模型自己寫出來的是什麼**；訓練時要同時看 `chosen_gain`（掉太多就是警訊）和生成出來的回答。
 
-另一個我們試過、沒有幫助的做法：把五種題型都放進偏好資料（`--kinds add,subtract,count,color,who`，其他設定不變）。1000 步之後 `color` 與 `who` 的偏好比例只有 53.3%／50.2%，合計 610／1000，比 SFT 還差。我們只跑了一次，沒有查原因。
+另一個我們試過、沒有幫助的做法：把五種題型都放進偏好資料（`uv run tools/dpo.py --out_dir runs/dpo_all5 --kinds add,subtract,count,color,who`，其他設定不變）。1000 步之後 `color` 與 `who` 的偏好比例只有 53.3%／50.2%，合計 610／1000，比 SFT 還差。我們只跑了一次，沒有查原因。
 
 ## 重點整理
 
