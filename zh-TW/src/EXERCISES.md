@@ -3137,6 +3137,77 @@ for n_train in [16, 1000]:
     print(f"n_train={n_train:4d}：訓練 loss {last['loss']:.2f}，val_loss {last['val_loss']:.2f}")
 ```
 
+### 第 4 集 reward model 的想法 — 狀態：可用
+
+**題目**
+
+寫一個「只看回覆、不看題目」的獎勵模型：每個顏色一個分數（`nn.Parameter`，10 個數字，從 0 開始），用 `make_preferences(2000, seed=0, split="train", kinds=("color",))` 與 `bradley_terry_loss` 訓練 300 步（`AdamW`，`lr=0.05`）。算分數較高的是 `chosen` 的比例，訓練的 2000 對與 `make_preferences(1000, seed=1, split="valid", kinds=("color",))` 的 1000 對各算一次。這個比例會比 50% 高多少？為什麼？
+
+**練習目標**：獎勵模型要看到提示。只看回覆的分數，在 `chosen` 與 `rejected` 的分布一樣的資料上，不可能比亂猜好。
+
+**批改重點**：訓練集 53.6%，驗證集 50.7%，最後的 loss 是 0.6891，幾乎就是 \\( \log 2 = 0.6931 \\)。分數範圍只有 \\( -0.25 \\) 到 \\( 0.24 \\)。`color` 題的 `chosen` 是題目裡被問的那樣東西的顏色，`rejected` 是另一個，兩邊的顏色分布一樣（每個顏色當 `chosen` 與當 `rejected` 的機會均等），所以某個顏色「比較好」沒有道理；訓練集上的 3.6 個百分點是 300 步 `AdamW` 對 2000 對資料的雜訊擬合，驗證集上就沒了。要分辨哪個顏色對，得知道題目問的是哪一樣東西。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import AdamW
+from llmz.posttrain import COLORS, bradley_terry_loss, make_preferences
+
+train = make_preferences(2000, seed=0, split="train", kinds=("color",))
+valid = make_preferences(1000, seed=1, split="valid", kinds=("color",))
+index = {c: i for i, c in enumerate(COLORS)}
+
+
+def ids(pairs):
+    return torch.tensor([index[p.chosen] for p in pairs]), torch.tensor([index[p.rejected] for p in pairs])
+
+
+scores = nn.Parameter(torch.zeros(len(COLORS)))  # 獎勵模型：每個顏色一個分數，不看題目
+optimizer = AdamW([scores], lr=0.05, weight_decay=0.0)
+train_chosen, train_rejected = ids(train)
+for step in range(300):
+    loss = bradley_terry_loss(scores[train_chosen], scores[train_rejected])
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+for name, pairs in [("train", train), ("valid", valid)]:
+    chosen, rejected = ids(pairs)
+    rate = (scores[chosen] > scores[rejected]).float().mean().item()
+    print(f"{name}：{len(pairs)} 對，分數較高的是 chosen 的比例 {rate:.1%}")
+print("loss", round(loss.item(), 4), "（log 2 = 0.6931）")
+print("分數範圍", round(scores.min().item(), 2), "到", round(scores.max().item(), 2))
+```
+
+### 第 5 集 DPO 推導與玩具版實作 — 狀態：可用
+
+**題目**
+
+policy 比 reference 多給 `chosen` 的 log 機率 2、少給 `rejected` 2（reference 兩個都是 \\( -3 \\)，policy 是 \\( -1 \\) 與 \\( -5 \\)）。對 \\( \beta \in \{0.01, 0.1, 1, 5\} \\)，用 `dpo_loss` 各算 loss，並用 `backward()` 算對 `policy_chosen` 的梯度。loss 隨 \\( \beta \\) 怎麼變？梯度呢？為什麼？
+
+**練習目標**：\\( \beta \\) 同時放大隱含獎勵與壓縮 sigmoid 的有效範圍；loss 與梯度的大小不是單調的。
+
+**批改重點**：loss 是 0.6733、0.5130、0.0181、0.0000：\\( \beta \\) 越大越小，因為隱含獎勵的差是 \\( \beta \times 4 \\)，sigmoid 越快飽和。梯度是 \\( -0.0049 \\)、\\( -0.0401 \\)、\\( -0.0180 \\)、\\( -0.0000 \\)：先變大再變小。\\( \beta \\) 小時，loss 幾乎是 \\( \log 2 \\)，梯度大約是 \\( -\beta \sigma(-4\beta) \approx -\beta/2 \\)，隨 \\( \beta \\) 增加；\\( \beta \\) 大時 sigmoid 已經飽和，這一對「已經做對了」，梯度趨近 0，policy 不再被往外推，停在離 reference 不遠的地方。這就是 \\( \beta \\) 控制「policy 可以離 reference 多遠」的方式。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.posttrain import dpo_loss
+
+ref_chosen, ref_rejected = torch.tensor([-3.0]), torch.tensor([-3.0])
+for beta in [0.01, 0.1, 1.0, 5.0]:
+    policy_chosen = torch.tensor([-1.0], requires_grad=True)  # chosen 比 reference 高 2
+    policy_rejected = torch.tensor([-5.0], requires_grad=True)  # rejected 比 reference 低 2
+    loss = dpo_loss(policy_chosen, policy_rejected, ref_chosen, ref_rejected, beta)
+    loss.backward()
+    print(f"beta {beta:5.2f}：loss {loss.item():.4f}　對 chosen 的梯度 {policy_chosen.grad.item():+.4f}")
+```
+
 ## 第 15 章 後訓練：RL 與可驗證獎勵
 
 ### 第 1 集 policy gradient 直覺 — 狀態：可用

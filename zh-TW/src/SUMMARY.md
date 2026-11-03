@@ -160,6 +160,8 @@
     - [base model 與指令模型](chapter14/01_base_vs_instruct.md)
     - [chat template 與 loss mask](chapter14/02_chat_template_loss_mask.md)
     - [SFT 玩具版](chapter14/03_toy_sft.md)
+    - [reward model 的想法](chapter14/04_reward_model.md)
+    - [DPO 推導與玩具版實作](chapter14/05_dpo.md)
 - [後訓練：RL 與可驗證獎勵](chapter15/README.md)
     - [policy gradient 直覺](chapter15/01_policy_gradient_intuition.md)
     - [REINFORCE 玩具版](chapter15/02_reinforce_toy.md)
