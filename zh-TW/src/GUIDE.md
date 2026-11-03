@@ -63,8 +63,14 @@
 | 章 | 主題 | 目錄 |
 | --- | --- | --- |
 | 第 1 章 | 張量與剛好夠用的數學 | `chapter1/` |
+| 第 2 章 | autograd 與訓練迴圈 | `chapter2/` |
+| 第 3 章 | Tokenizer：從 bytes 到 token | `chapter3/` |
+| 第 4 章 | Transformer 的零件 | `chapter4/` |
+| 第 5 章 | 訓練 | `chapter5/` |
+| 第 6 章 | 生成與實驗 | `chapter6/` |
+| 附錄一 | MLX、einops、常見錯誤、CS336 A1 對照、雲端 GPU | `appendix1/` |
 
-還沒寫：第 2 章 autograd 與訓練迴圈、第 3 章 Tokenizer、第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -169,7 +175,13 @@
 | 讀完 | 主要內容 |
 | --- | --- |
 | 第 1 章 | 取得程式碼與 `uv run` 固定句型、`torch.tensor`、`.sum()`／`.item()`、`.shape`／`.dtype`／`.float()`／`.reshape`／`torch.zeros`／`torch.ones`／`torch.arange`、索引與切片（含用索引張量取多個位置）、broadcasting 與 `.sum(dim=, keepdim=)`、`torch.dot`／`@`／`.norm()`、矩陣乘法與 `.T`、`torch.einsum` 與 `.transpose()`／`torch.equal`、`get_device()` 與 `.to(device)`、`torch.manual_seed`／`torch.rand`／`torch.randn`／`torch.randint`／`.mean()`／`.std()`／`.abs()`、用有限差分算導數與梯度（純 Python 浮點數與 `torch.zeros_like`／`.clone()`）、手寫 5 步梯度下降、自己寫的 softmax（`torch.exp`、`.max()`）、`torch.log`／`.prod()`／`torch.multinomial`／`torch.argmax`、cross-entropy 與 perplexity、log-sum-exp，以及 `llmz.functional` 的 `softmax`／`logsumexp`／`log_softmax`／`cross_entropy`／`perplexity` |
-| 第 2 章以後 | 尚未出版 |
+| 第 2 章 | `requires_grad=True`／`.backward()`／`.grad`／`grad_fn`、`torch.no_grad()`／`.grad.zero_()`／就地運算（結尾底線）、`nn.Module` 子類別（`super().__init__()`、`nn.Parameter`、`forward`、`model(x)`、`parameters()`／`named_parameters()`、`model.to(device)`）、MSE loss、自己寫的簡易 `SGD` 類別（`step()`／`zero_grad()`、`p.grad = None`）、五步訓練迴圈固定句型、線性回歸完整範例、`state_dict()`／`torch.save`／`torch.load`／`load_state_dict`／`fill_`、`llmz.utils.count_parameters`、`numel()`、記憶體（參數 4 位元組、梯度 4、AdamW 狀態 8）與 FLOPs（矩陣乘法 \\( 2mkn \\)、訓練一個 token 約 6 × 參數量）估算 |
+| 第 3 章 | `ord`／`chr`、`str.encode("utf-8")`／`bytes.decode(errors="replace")`、`bytes([...])`、`Counter`、BPE 的想法與次數相同取較大 pair 的規則、`regex` 套件與 `GPT2_PATTERN`、特殊 token 與 `re.escape`／`re.split`、`multiprocessing.Pool` 與 `if __name__ == "__main__":`、`yield`／`yield from`、`io.StringIO`、`json`、latin-1、`array.array("H")`、`np.memmap`、HTTP Range、`llmz.tokenizer`（`pretokenize`、`split_on_special`、`count_words`、`count_pairs`、`merge_word`、`base_vocab`、`train_bpe_naive`、`count_words_parallel`、`train_bpe`、`Tokenizer` 的 `encode_word`／`encode`／`decode`／`encode_iterable`／`save`／`load`）、`llmz.data`（`download`、`cut_at_last_document`、`tokenize_to_file`、`load_tokens`）、`tools/prepare_data.py` 與標準語料（train 40,720,162 個 token、valid 5,461,883 個、vocab 10000、4.12 bytes/token） |
+| 第 4 章 | B／T／d_model 的意義與標準設定（d_model 512、4 層、16 head、d_ff 1344、vocab 10000、context 256）、`torch.allclose`、`llmz.layers`（`Linear`（無 bias、`(out, in)`、初始化 \\( \sqrt{2/(in+out)} \\) 截 3σ）、`Embedding`、`RMSNorm`（float32 算、`eps`）、`silu`、`SwiGLU`、`SiLUFFN`、`Identity`）、`torch.sigmoid`、RoPE 的旋轉與相對位置性質、`llmz.attention`（`RoPE` 與 `register_buffer`、`causal_mask`／`torch.tril`、`scaled_dot_product_attention`／`masked_fill`／`-inf`、`MultiHeadSelfAttention` 的 reshape／transpose 流程）、`torch.stack`／`flatten`／`expand`、`llmz.model`（`ModelConfig` dataclass 含消融開關、`TransformerBlock` pre-norm 與殘差、`TransformerLM`、`nn.ModuleList`）、輸入 `ids[:, :-1]`／答案 `ids[:, 1:]` 與 `reshape(-1, V)` 算 loss、未訓練 loss ≈ ln V、參數量（標準設定 22,696,448）與 FLOPs（forward 每 token 37.2 MFLOPs，訓練 41M token 4.6 PFLOPs）估算；只用 `F.scaled_dot_product_attention`、`F.rms_norm`、`F.silu` 驗證 |
+| 第 5 章 | 語言模型 loss 的對齊與初始值 ≈ ln V、`torch.optim.Optimizer` 基底（`param_groups`、`state`、`@torch.no_grad()` 裝飾器）、`llmz.optim`（`SGD`、`AdamW`（m／v／偏差修正／decoupled weight decay、預設 betas (0.9, 0.95)、wd 0.1）、`lr_cosine_schedule`（warmup 200、1e-3 → 1e-4、5000 步）、`clip_grad_norm_`（max_norm 1.0））、`mul_`／`add_` 就地運算、`get_batch`（`torch.randint` 起點、memmap 切片、int64）、`llmz.train`（`TrainConfig`、`save_checkpoint`／`load_checkpoint`、`evaluate`、`train`、JSONL log、`latest.pt` 自動接續、smoke 設定）、`model.eval()`／`train()`、`tools/train.py` 命令列與 `--compile`、MPS 實測（CPU 2.4 s／MPS 0.44 s／compile 0.28 s 一步，5.5 GB）、沒有 TF32、`torch.mps.synchronize()`、完整訓練的結果與 `tools/plot_loss.py` |
+| 第 6 章 | 生成迴圈（餵最後 `context_length` 個、取最後位置 logits）、`llmz.generate`（`greedy_next`、`sample_next` 的 temperature 與 top-p（`torch.sort`／`cumsum`／`scatter`）、`generate`）、載入 `runs/base/model.pt` 生成、消融實驗的做法（1000 步縮短設定、`runs/base_1k` 基準、只改一個零件、差 0.02 內是雜訊）與結果（拿掉 RMSNorm、post-norm、NoPE、SiLU 取代 SwiGLU）、學習率掃描（三倍一格）、batch 大小（固定 token 總數）；`tools/train.py` 的 `--norm`／`--norm_position`／`--no-rope`／`--ffn`／`--d_ff`／`--lr_max`／`--batch_size` 等旗標 |
+| 附錄一 | MLX 的概念對照（不裝）、`einops` 的 `rearrange`／`reduce`／`repeat`／`einsum`（只在附錄）、常見錯誤訊息對照、CS336 A1 對照表、雲端 GPU 的流程 |
+| 第 7 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -180,6 +192,7 @@
 | 第 1 章第 1 集 | `git clone` 本書 repo、`uv sync`、在 `playground/` 寫 `.py`、`uv run playground/<檔名>.py` | 不另外解釋 |
 | 第 1 章第 1 集 | `import torch` | 第 1 章 |
 | 第 1 章第 9 集 | `from llmz.device import get_device`、`device = get_device()`、`x.to(device)` | 第 1 章第 9 集 |
+| 第 2 章第 4 集 | 訓練迴圈五步：`pred = model(x)` → `loss = ...` → `loss.backward()` → `opt.step()` → `opt.zero_grad()` | 第 2 章第 4 集（優化器內部在第 5 章） |
 
 ### 4.3 精確門檻
 
@@ -198,8 +211,53 @@
 | `torch.log`、`.prod()`、`torch.multinomial`、`torch.argmax` | 第 1 章第 14 集 | 不取樣、不取 log |
 | cross-entropy、perplexity | 第 1 章第 15 集 | 不談 loss |
 | `.max()`、`x.max(dim=..., keepdim=True).values`、`torch.logsumexp`（只用來驗證）、`llmz.functional` | 第 1 章第 16 集 | 用第 13 集的手寫 softmax |
-| autograd、`requires_grad`、`.backward()` | 第 2 章第 1 集 | 用有限差分 |
-| `nn.Module`、`nn.Parameter` | 第 2 章第 3 集 | 用一般的張量與函式 |
+| autograd、`requires_grad`、`.backward()`、`.grad` | 第 2 章第 1 集 | 用有限差分 |
+| `torch.no_grad()`、`.grad.zero_()`、就地運算 | 第 2 章第 2 集 | 用 `w = w - lr * grad` 重新指定 |
+| `nn.Module`、`nn.Parameter`、`forward`、`parameters()` | 第 2 章第 3 集 | 用一般的張量與函式 |
+| loss（MSE）、優化器 `step()`／`zero_grad()`、五步迴圈 | 第 2 章第 4 集 | 手寫更新與歸零 |
+| `state_dict()`、`torch.save`／`torch.load`、`load_state_dict`、`fill_` | 第 2 章第 6 集 | 不存檔 |
+| `count_parameters`、`numel()`、記憶體與 FLOPs 估算 | 第 2 章第 7 集 | 不估算 |
+| `ord`／`chr`、`encode`／`decode`、bytes | 第 3 章第 1 集 | 不談文字 |
+| BPE 的想法、`Counter`、相鄰 pair 統計 | 第 3 章第 3 集 | 不談 tokenizer |
+| `regex`、`GPT2_PATTERN`、`pretokenize` | 第 3 章第 4 集 | 用 `str.split()` |
+| 特殊 token、`split_on_special` | 第 3 章第 5 集 | 文字裡不放特殊 token |
+| `count_words`、`count_pairs`、`merge_word`、`train_bpe_naive` | 第 3 章第 6、7 集 | 手算 |
+| `multiprocessing`、`count_words_parallel`、`train_bpe` | 第 3 章第 8 集 | 用 `train_bpe_naive` |
+| `Tokenizer`、`encode`、`decode` | 第 3 章第 9、10 集 | 只訓練不 encode |
+| `yield`、`encode_iterable`、`save`／`load` | 第 3 章第 11 集 | 整段文字一次 encode |
+| `llmz.data`、`np.memmap`、`tools/prepare_data.py`、標準語料 | 第 3 章第 14 集 | 不碰資料檔 |
+| `Linear`、初始化、`torch.allclose` | 第 4 章第 2 集 | 用 `x @ W` 手寫 |
+| `Embedding` | 第 4 章第 3 集 | 用 `table[ids]` |
+| `RMSNorm` | 第 4 章第 4 集 | 不正規化 |
+| `silu`、`SwiGLU`、`torch.sigmoid` | 第 4 章第 5 集 | 不談啟用函式 |
+| RoPE 的想法、`torch.stack` | 第 4 章第 6 集 | 不談位置 |
+| `RoPE` 模組、`register_buffer`、`flatten` | 第 4 章第 7 集 | 用第 6 集的 2 維旋轉 |
+| `-inf` 遮罩與 softmax | 第 4 章第 8 集 | 不遮 |
+| `scaled_dot_product_attention`、`masked_fill`、`transpose(-2, -1)` | 第 4 章第 9 集 | 手寫 `softmax(q @ k.T) @ v` |
+| `causal_mask`、`torch.tril` | 第 4 章第 10 集 | 不遮未來 |
+| `MultiHeadSelfAttention`、head 的 reshape／transpose | 第 4 章第 11 集 | 單一 head |
+| RoPE 接進 attention、`expand` | 第 4 章第 12 集 | 不加位置 |
+| `ModelConfig`、`TransformerBlock`、殘差、pre-norm | 第 4 章第 13 集 | 單獨用零件 |
+| `TransformerLM`、`nn.ModuleList`、shift 一格算 loss | 第 4 章第 14 集 | 用 block |
+| 參數量與 FLOPs 的逐項公式 | 第 4 章第 15 集 | 用 `count_parameters` 數 |
+| 語言模型 loss 對齊、初始 loss ≈ ln V | 第 5 章第 1 集 | 用第 4 章第 14 集的寫法 |
+| `torch.optim.Optimizer` 基底、`param_groups`、`llmz.optim.SGD` | 第 5 章第 2 集 | 用第 2 章的簡易 `SGD` |
+| `AdamW`、`state`、`mul_`／`add_` | 第 5 章第 3 集 | 用 `SGD` |
+| `lr_cosine_schedule`、改 `param_groups` 的 lr | 第 5 章第 4 集 | 固定學習率 |
+| `clip_grad_norm_` | 第 5 章第 5 集 | 不裁剪 |
+| `get_batch`、memmap 隨機切片 | 第 5 章第 6 集 | 手動切 `ids[:, :-1]` |
+| `save_checkpoint`／`load_checkpoint` | 第 5 章第 7 集 | 只存 `state_dict` |
+| `TrainConfig`、`train`、`evaluate`、JSONL、smoke 設定 | 第 5 章第 8 集 | 手寫迴圈 |
+| MPS 速度、`torch.compile`、`synchronize` | 第 5 章第 9 集 | 不談效能 |
+| `tools/train.py`、完整訓練、`tools/plot_loss.py` | 第 5 章第 10、11 集 | 用 smoke 設定 |
+| 生成迴圈、`greedy_next` | 第 6 章第 1 集 | 不生成文字 |
+| `sample_next`、temperature、`torch.multinomial` 抽 token | 第 6 章第 2 集 | 用 greedy |
+| top-p、`torch.sort`／`cumsum`／`scatter` | 第 6 章第 3 集 | 只用 temperature |
+| `generate`、載入訓練好的模型 | 第 6 章第 4 集 | 手寫迴圈 |
+| 消融實驗、`--norm`／`--norm_position`／`--no-rope`／`--ffn` 旗標 | 第 6 章第 5～8 集 | 只跑標準設定 |
+| 學習率掃描、batch 大小實驗 | 第 6 章第 9、10 集 | 用預設值 |
+| `einops` | 附錄一 b | 用 `reshape`／`transpose`／`einsum` |
+| 第二部內容（效能分析、FlashAttention、平行化、scaling law、推論） | 第 7 章起 | 不談 |
 
 ---
 
@@ -209,9 +267,9 @@
 
 1. **執行方式**：`uv run playground/<檔名>.py`。不要教 `pip install`、`conda`、虛擬環境啟用；讀者的環境由 `uv sync` 管理。
 2. **從頭寫**：本書的模型、loss、優化器不用 `torch.nn` 的現成層、`torch.nn.functional`、`torch.optim`（只用 `nn.Module`、`nn.Parameter`、容器與 `Optimizer` 基底）。讀者問「為什麼不用 `nn.Linear`」時，說明這是本書刻意的設計，並且告訴他業界實務上會用。torch 內建函式（`torch.softmax` 等）只拿來**驗證**自己寫的結果。
-3. **device**：Apple Silicon 用 `mps`。MPS 上沒有 TF32，`torch.compile` 的 Inductor 不支援 MPS；浮點結果最後幾位可能與 CPU 不同，不是 bug。書上的輸出都是 CPU 算的。
+3. **device**：Apple Silicon 用 `mps`。MPS 上沒有 TF32；`torch.compile` 在 PyTorch 2.9 的 MPS 上可以用，但加速幅度要實測（第 5 章第 9 集）。浮點結果最後幾位可能與 CPU 不同，不是 bug。書上的輸出都是 CPU 算的。
 4. **隨機數**：用 `torch.manual_seed(0)` 之後，CPU 上的 `torch.randn` 在每台機器都一樣；MPS 不保證。
-5. **型別**：`torch.tensor([1, 2, 3])` 是 `int64`，`torch.tensor([1.0, 2.0])` 是 `float32`。整數張量不能做 `torch.exp`、`torch.log`，要先 `.float()`。
+5. **型別**：`torch.tensor([1, 2, 3])` 是 `int64`，`torch.tensor([1.0, 2.0])` 是 `float32`。整數張量不能做 `.mean()`、`.std()`，要先 `.float()`；`torch.exp`、`torch.log` 會自動轉成浮點數。
 6. **形狀**：`dim=-1` 代表最後一個維度；`keepdim=True` 保留被縮掉的維度，broadcasting 才對得上。
 7. **不要拿其他框架比較**：讀者是零基礎，不要說「跟 NumPy 一樣」「跟 TensorFlow 不同」，除非讀者自己提到。
 8. **不要引用 CS336 講義或作業的內容**當作本書的說法；需要延伸閱讀時給 <https://cs336.stanford.edu> 連結即可。
@@ -259,7 +317,7 @@
 5. 張量用小尺寸，讀者能用手驗算。
 6. 隨機數一律先 `torch.manual_seed(0)`。
 7. 哪個函式能不能用，照第 4 節的門檻表，不要憑感覺。
-8. 不使用 `torch.nn` 現成層、`torch.nn.functional`、`torch.optim`，也不引入本書沒有的第三方套件（transformers、tiktoken、einops 等）。
+8. 不使用 `torch.nn` 現成層、`torch.nn.functional`、`torch.optim`，也不引入本書沒有的第三方套件（transformers、tiktoken 等）；`einops` 只在附錄一出現，正文與題目不用。
 
 ---
 

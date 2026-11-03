@@ -18,11 +18,20 @@ uv run python tools/checkcode.py zh-TW/src   # 執行並驗證書中所有 Pytho
 cd zh-TW && mdbook serve                     # 本機預覽
 ```
 
+跟著書訓練模型：
+
+```bash
+uv run tools/prepare_data.py                        # 下載標準語料、訓練 BPE、轉 token 檔（約一分鐘）
+uv run tools/train.py --out_dir runs/base --compile # 完整訓練（M4 Max 約 23 分鐘）
+uv run tools/plot_loss.py runs/base -o loss.png     # 畫 loss 曲線
+```
+
 ## 程式碼怎麼放
 
 - `src/llmz/`：全書逐章累積的套件（tokenizer、模型、優化器……），書中用 mdBook 的 `{{#include}}` 以 anchor 引入片段，所以書上看到的程式碼就是 `tests/` 驗證過的版本。
 - `zh-TW/src/`：mdBook 內容。每個 ```` ```python ```` 區塊都會被 `tools/checkcode.py` 實際執行。
-- `playground/`：給讀者放自己練習檔的地方，已被 `.gitignore` 忽略。
+- `tools/`：`checkcode.py`（驗證書中範例）、`prepare_data.py`、`train.py`、`plot_loss.py`。
+- `playground/`、`data/`、`runs/`：讀者的練習檔、語料與訓練輸出，都在 `.gitignore` 裡。
 
 ### 範例程式碼標註
 

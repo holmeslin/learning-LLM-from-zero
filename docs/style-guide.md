@@ -88,7 +88,7 @@
 
 ## 正確性
 
-- 以 PyTorch 2.9、Python 3.13 為準；MPS 上沒有 TF32、`torch.compile` 的 Inductor 不支援 MPS，相關章節要照實寫。
+- 以 PyTorch 2.9、Python 3.13 為準；MPS 上沒有 TF32；`torch.compile` 在 2.9.1 的 MPS 上實測可用（Inductor 的 Metal 後端），加速幅度要實測後寫，不要憑印象。
 - 書中的數字（loss、時間、記憶體）都要實測，寫明環境與設定。
 - 不確定 API 行為時實際寫程式驗證，不要憑印象。
 - 完成後執行 `uv run pytest` 與 `uv run python tools/checkcode.py zh-TW/src/<章節目錄>`，全部通過才算完成；`cd zh-TW && mdbook build` 不能有 warning。
