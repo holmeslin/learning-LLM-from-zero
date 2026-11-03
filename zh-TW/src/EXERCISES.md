@@ -1,6 +1,6 @@
 # EXERCISES.md — 練習題規則與固定題庫
 
-這份文件給 AI 助教使用，說明什麼時候可以出題、怎麼出、怎麼批改，並收錄第 1 章的固定題目。
+這份文件給 AI 助教使用，說明什麼時候可以出題、怎麼出、怎麼批改，並收錄已出版各章的固定題目。
 
 本文件裡的題目分成兩種，請不要混在一起：
 
@@ -33,7 +33,7 @@
 - 一題只練一個剛學的概念，程式碼在 10 行以內。
 - 題目要說清楚輸入是什麼、預期印出什麼。
 - 出題後附上你自己跑過（或手算過）的預期輸出，讓讀者能對答案。
-- 不要出需要訓練、需要資料檔、需要 GPU 的題目；第 1 章讀者的題目只用 CPU 上的小張量。
+- 不要出需要資料檔、需要 GPU、要跑超過幾秒的題目；一律用 CPU 上的小張量。第 2 章起可以出「訓練幾步」的題目，但資料要在程式裡自己造。
 
 ---
 
@@ -356,4 +356,237 @@ print(torch.exp(s) / torch.exp(s).sum())
 shifted = s - s.max()
 print(torch.exp(shifted) / torch.exp(shifted).sum())
 print(softmax(s))
+```
+
+---
+
+## 第 2 章 autograd 與訓練迴圈
+
+### 第 1 集 autograd — 狀態：可用
+
+**題目**
+
+1. `x = torch.tensor(3.0, requires_grad=True)`，算 `y = x ** 3 + 2 * x`，用 `backward()` 印出 `x.grad`，和手算的 \\( 3x^2 + 2 = 29 \\) 比較。
+2. `w = torch.tensor([1.0, 2.0], requires_grad=True)`，算 `(w * w).sum()` 的梯度，再用第 1 章第 12 集的有限差分驗算。
+
+**練習目標**：`requires_grad` → 計算 → `backward()` → `.grad` 這四步；梯度形狀和張量一樣。
+
+**批改重點**：`backward()` 要對純量呼叫；忘記 `requires_grad=True` 會得到 `None`。
+
+**參考答案**（第 1 題）
+
+```python
+import torch
+
+x = torch.tensor(3.0, requires_grad=True)
+y = x ** 3 + 2 * x
+y.backward()
+print(x.grad)
+```
+
+### 第 2 集 手動梯度下降 — 狀態：可用
+
+**題目**
+
+用 autograd 對 \\( f(w) = (w - 5)^2 \\) 做 10 步梯度下降，從 `w = 0.0` 開始、學習率 0.3，每步印出 `w` 的值（四捨五入到小數點後三位）。最後 `w` 應該接近 5。
+
+**練習目標**：更新寫在 `torch.no_grad()` 裡、更新後梯度歸零。
+
+**批改重點**：少了 `no_grad` 會報錯或梯度跟丟；少了 `zero_()`（或設 `None`）梯度會越加越大、`w` 衝過頭。
+
+**參考答案**
+
+```python
+import torch
+
+w = torch.tensor(0.0, requires_grad=True)
+for step in range(10):
+    f = (w - 5) ** 2
+    f.backward()
+    with torch.no_grad():
+        w -= 0.3 * w.grad
+    w.grad.zero_()
+    print(step, round(w.item(), 3))
+```
+
+### 第 3 集 `nn.Module` 與 `nn.Parameter` — 狀態：可用
+
+**題目**
+
+寫一個 `Quadratic(nn.Module)`，有三個參數 `a`、`b`、`c`（都從 0 開始），`forward(x)` 回傳 \\( ax^2 + bx + c \\)。建立模型後用 `named_parameters()` 印出每個參數的名字，再對 `torch.tensor([1.0, 2.0])` 算一次輸出。
+
+**練習目標**：`super().__init__()`、`nn.Parameter`、`forward`、`model(x)`。
+
+**批改重點**：忘記 `super().__init__()` 會在指定 `nn.Parameter` 時報錯；呼叫用 `model(x)` 不是 `model.forward(x)`。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+
+class Quadratic(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.a = nn.Parameter(torch.tensor(0.0))
+        self.b = nn.Parameter(torch.tensor(0.0))
+        self.c = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, x):
+        return self.a * x ** 2 + self.b * x + self.c
+
+
+model = Quadratic()
+for name, p in model.named_parameters():
+    print(name, p.shape)
+print(model(torch.tensor([1.0, 2.0])))
+```
+
+### 第 4 集 訓練迴圈固定句型 — 狀態：可用
+
+**題目**
+
+把第 4 集的程式改成 `x = torch.tensor([0.0, 1.0, 2.0])`、`y = torch.tensor([1.0, 3.0, 5.0])`（也就是 \\( y = 2x + 1 \\)），學習率 0.1，跑 20 步，每 5 步印一次 loss。用五步固定句型，順序不能變。
+
+**練習目標**：forward → loss → `backward()` → `step()` → `zero_grad()`。
+
+**批改重點**：`zero_grad()` 放在 `backward()` 之前會清掉剛算好的梯度；忘記 `zero_grad()` 梯度會累加。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+
+class LinearModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w = nn.Parameter(torch.tensor(0.0))
+        self.b = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, x):
+        return self.w * x + self.b
+
+
+def mse(pred, target):
+    return ((pred - target) ** 2).mean()
+
+
+class SGD:
+    def __init__(self, params, lr):
+        self.params = list(params)
+        self.lr = lr
+
+    def step(self):
+        with torch.no_grad():
+            for p in self.params:
+                p -= self.lr * p.grad
+
+    def zero_grad(self):
+        for p in self.params:
+            p.grad = None
+
+
+x = torch.tensor([0.0, 1.0, 2.0])
+y = torch.tensor([1.0, 3.0, 5.0])
+model = LinearModel()
+opt = SGD(model.parameters(), lr=0.1)
+for step in range(1, 21):
+    pred = model(x)
+    loss = mse(pred, y)
+    loss.backward()
+    opt.step()
+    opt.zero_grad()
+    if step % 5 == 0:
+        print(step, round(loss.item(), 4))
+```
+
+### 第 5 集 線性回歸完整範例 — 狀態：可用
+
+**題目**
+
+把第 5 集的資料改成 \\( y = -2x + 4 \\) 加雜訊 0.1（種子 0，100 個點），訓練 300 步，印出最後的 `w`、`b`。再把學習率分別改成 0.05 與 2.5 各跑一次，用一句話描述你看到的差別。
+
+**練習目標**：整支程式能從頭寫出來；觀察學習率對收斂的影響。
+
+**批改重點**：`w` 接近 -2、`b` 接近 4；0.05 時 300 步還沒收斂，2.5 時 loss 變成 `inf` 或 `nan`。
+
+**參考答案**（只列資料那三行，其餘與第 5 集相同）
+
+```python,ignore
+torch.manual_seed(0)
+x = torch.rand(100)
+y = -2 * x + 4 + 0.1 * torch.randn(100)
+```
+
+### 第 6 集 `state_dict` 儲存與載入 — 狀態：可用
+
+**題目**
+
+建立第 3 集的 `LinearModel`，在 `no_grad()` 裡把 `w` 設成 1.5、`b` 設成 -0.5，存成 `model.pt`。再建一個新的 `LinearModel`，載入檔案，印出 `state_dict()` 確認參數一樣。
+
+**練習目標**：`state_dict()`、`torch.save`、`torch.load`、`load_state_dict`。
+
+**批改重點**：就地改參數要在 `no_grad()` 裡（`fill_` 或 `copy_` 都可以）；載入前要先建好同一個類別的模型。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+
+class LinearModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w = nn.Parameter(torch.tensor(0.0))
+        self.b = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, x):
+        return self.w * x + self.b
+
+
+m = LinearModel()
+with torch.no_grad():
+    m.w.fill_(1.5)
+    m.b.fill_(-0.5)
+torch.save(m.state_dict(), "model.pt")
+m2 = LinearModel()
+m2.load_state_dict(torch.load("model.pt"))
+print(m2.state_dict())
+```
+
+### 第 7 集 FLOPs 與記憶體估算 — 狀態：可用
+
+**題目**
+
+一個模型有 5000 萬個參數，要看 4000 萬個 token。(1) 用 AdamW 訓練時，參數、梯度、優化器狀態合計要多少 GB？(2) 用「訓練一個 token 約 6 × 參數量 FLOPs」估算總 FLOPs。(3) 用 `count_parameters` 數一個有 `nn.Parameter(torch.zeros(512, 2048))` 與 `nn.Parameter(torch.zeros(2048))` 的 `nn.Module` 有幾個參數。
+
+**練習目標**：把估算公式實際算一次；會用 `count_parameters`。
+
+**批改重點**：(1) 50M × 16 位元組 = 0.8 GB；(2) 6 × 50M × 40M = 1.2 × 10¹⁶；(3) 1,050,624。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.utils import count_parameters
+
+params = 50_000_000
+print(params * 16 / 1e9, "GB")
+print(f"{6 * params * 40_000_000:.1e}")
+
+
+class M(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.W = nn.Parameter(torch.zeros(512, 2048))
+        self.b = nn.Parameter(torch.zeros(2048))
+
+
+print(count_parameters(M()))
 ```

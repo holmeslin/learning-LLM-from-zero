@@ -2,6 +2,7 @@ name: deployment
 on:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
@@ -13,11 +14,9 @@ env:
   MDBOOK_VERSION: "0.5.4"
 
 jobs:
-  deploy:
+  # PR 與 main 都跑：測試、驗證書中範例、建書
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
 
@@ -54,11 +53,20 @@ jobs:
           cp index.html public/index.html
           cp -r zh-TW/book public/zh-TW
 
-      - uses: actions/configure-pages@v6
-
       - uses: actions/upload-pages-artifact@v5
         with:
           path: ./public
+
+  # 只有 push 到 main 才部署
+  deploy:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
 
       - id: deployment
         uses: actions/deploy-pages@v5

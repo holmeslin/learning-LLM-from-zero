@@ -63,8 +63,9 @@
 | 章 | 主題 | 目錄 |
 | --- | --- | --- |
 | 第 1 章 | 張量與剛好夠用的數學 | `chapter1/` |
+| 第 2 章 | autograd 與訓練迴圈 | `chapter2/` |
 
-還沒寫：第 2 章 autograd 與訓練迴圈、第 3 章 Tokenizer、第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 3 章 Tokenizer、第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -169,7 +170,8 @@
 | 讀完 | 主要內容 |
 | --- | --- |
 | 第 1 章 | 取得程式碼與 `uv run` 固定句型、`torch.tensor`、`.sum()`／`.item()`、`.shape`／`.dtype`／`.float()`／`.reshape`／`torch.zeros`／`torch.ones`／`torch.arange`、索引與切片（含用索引張量取多個位置）、broadcasting 與 `.sum(dim=, keepdim=)`、`torch.dot`／`@`／`.norm()`、矩陣乘法與 `.T`、`torch.einsum` 與 `.transpose()`／`torch.equal`、`get_device()` 與 `.to(device)`、`torch.manual_seed`／`torch.rand`／`torch.randn`／`torch.randint`／`.mean()`／`.std()`／`.abs()`、用有限差分算導數與梯度（純 Python 浮點數與 `torch.zeros_like`／`.clone()`）、手寫 5 步梯度下降、自己寫的 softmax（`torch.exp`、`.max()`）、`torch.log`／`.prod()`／`torch.multinomial`／`torch.argmax`、cross-entropy 與 perplexity、log-sum-exp，以及 `llmz.functional` 的 `softmax`／`logsumexp`／`log_softmax`／`cross_entropy`／`perplexity` |
-| 第 2 章以後 | 尚未出版 |
+| 第 2 章 | `requires_grad=True`／`.backward()`／`.grad`／`grad_fn`、`torch.no_grad()`／`.grad.zero_()`／就地運算（結尾底線）、`nn.Module` 子類別（`super().__init__()`、`nn.Parameter`、`forward`、`model(x)`、`parameters()`／`named_parameters()`、`model.to(device)`）、MSE loss、自己寫的簡易 `SGD` 類別（`step()`／`zero_grad()`、`p.grad = None`）、五步訓練迴圈固定句型、線性回歸完整範例、`state_dict()`／`torch.save`／`torch.load`／`load_state_dict`／`fill_`、`llmz.utils.count_parameters`、`numel()`、記憶體（參數 4 位元組、梯度 4、AdamW 狀態 8）與 FLOPs（矩陣乘法 \\( 2mkn \\)、訓練一個 token 約 6 × 參數量）估算 |
+| 第 3 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -180,6 +182,7 @@
 | 第 1 章第 1 集 | `git clone` 本書 repo、`uv sync`、在 `playground/` 寫 `.py`、`uv run playground/<檔名>.py` | 不另外解釋 |
 | 第 1 章第 1 集 | `import torch` | 第 1 章 |
 | 第 1 章第 9 集 | `from llmz.device import get_device`、`device = get_device()`、`x.to(device)` | 第 1 章第 9 集 |
+| 第 2 章第 4 集 | 訓練迴圈五步：`pred = model(x)` → `loss = ...` → `loss.backward()` → `opt.step()` → `opt.zero_grad()` | 第 2 章第 4 集（優化器內部在第 5 章） |
 
 ### 4.3 精確門檻
 
@@ -198,8 +201,13 @@
 | `torch.log`、`.prod()`、`torch.multinomial`、`torch.argmax` | 第 1 章第 14 集 | 不取樣、不取 log |
 | cross-entropy、perplexity | 第 1 章第 15 集 | 不談 loss |
 | `.max()`、`x.max(dim=..., keepdim=True).values`、`torch.logsumexp`（只用來驗證）、`llmz.functional` | 第 1 章第 16 集 | 用第 13 集的手寫 softmax |
-| autograd、`requires_grad`、`.backward()` | 第 2 章第 1 集 | 用有限差分 |
-| `nn.Module`、`nn.Parameter` | 第 2 章第 3 集 | 用一般的張量與函式 |
+| autograd、`requires_grad`、`.backward()`、`.grad` | 第 2 章第 1 集 | 用有限差分 |
+| `torch.no_grad()`、`.grad.zero_()`、就地運算 | 第 2 章第 2 集 | 用 `w = w - lr * grad` 重新指定 |
+| `nn.Module`、`nn.Parameter`、`forward`、`parameters()` | 第 2 章第 3 集 | 用一般的張量與函式 |
+| loss（MSE）、優化器 `step()`／`zero_grad()`、五步迴圈 | 第 2 章第 4 集 | 手寫更新與歸零 |
+| `state_dict()`、`torch.save`／`torch.load`、`load_state_dict`、`fill_` | 第 2 章第 6 集 | 不存檔 |
+| `count_parameters`、`numel()`、記憶體與 FLOPs 估算 | 第 2 章第 7 集 | 不估算 |
+| tokenizer、BPE、bytes 相關 | 第 3 章 | 不談文字 |
 
 ---
 
@@ -209,7 +217,7 @@
 
 1. **執行方式**：`uv run playground/<檔名>.py`。不要教 `pip install`、`conda`、虛擬環境啟用；讀者的環境由 `uv sync` 管理。
 2. **從頭寫**：本書的模型、loss、優化器不用 `torch.nn` 的現成層、`torch.nn.functional`、`torch.optim`（只用 `nn.Module`、`nn.Parameter`、容器與 `Optimizer` 基底）。讀者問「為什麼不用 `nn.Linear`」時，說明這是本書刻意的設計，並且告訴他業界實務上會用。torch 內建函式（`torch.softmax` 等）只拿來**驗證**自己寫的結果。
-3. **device**：Apple Silicon 用 `mps`。MPS 上沒有 TF32，`torch.compile` 的 Inductor 不支援 MPS；浮點結果最後幾位可能與 CPU 不同，不是 bug。書上的輸出都是 CPU 算的。
+3. **device**：Apple Silicon 用 `mps`。MPS 上沒有 TF32；`torch.compile` 在 PyTorch 2.9 的 MPS 上可以用，但加速幅度要實測（第 5 章第 9 集）。浮點結果最後幾位可能與 CPU 不同，不是 bug。書上的輸出都是 CPU 算的。
 4. **隨機數**：用 `torch.manual_seed(0)` 之後，CPU 上的 `torch.randn` 在每台機器都一樣；MPS 不保證。
 5. **型別**：`torch.tensor([1, 2, 3])` 是 `int64`，`torch.tensor([1.0, 2.0])` 是 `float32`。整數張量不能做 `torch.exp`、`torch.log`，要先 `.float()`。
 6. **形狀**：`dim=-1` 代表最後一個維度；`keepdim=True` 保留被縮掉的維度，broadcasting 才對得上。
