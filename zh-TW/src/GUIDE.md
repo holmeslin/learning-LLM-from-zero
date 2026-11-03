@@ -76,8 +76,9 @@
 | 第 11 章 | 推論 | `chapter11/` |
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 | 第 12 章（第 1～3 集） | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題 | `chapter12/` |
+| 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 
-還沒寫：第 12 章第 4、5 集，以及第 13～15 章。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 12 章第 4、5 集、第 13～14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -196,6 +197,8 @@
 | 附錄二 | NVIDIA 顯示卡的 SM、shared memory、thread／warp／block／grid、CUDA kernel（`__global__`、`blockIdx`／`threadIdx`、`<<<...>>>`）與 `torch.utils.cpp_extension.load_inline`、Triton 向量相加、`torch.cuda.Event`／`max_memory_allocated`／memory snapshot、`nsys`／`ncu`、`TORCH_LOGS=output_code`、CS336 A2／A3 對照表（全部選讀、需 GPU 的部分未驗證） |
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
 | 第 12 章第 4 集以後 | 尚未出版 |
+| 第 15 章第 1～3 集 | RL 的名詞（policy、reward、動作、平均獎勵 \\( J \\)）、多臂吃角子老虎機（bandit）、policy gradient \\( \nabla J = \mathbb{E}[R \nabla \log \pi(a)] \\)（log 導數技巧、softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`、抽樣估計的誤差約 \\( 1/\sqrt{n} \\)）、`llmz.rl`（`sample_actions`、`bandit_rewards`、`expected_reward`、`reinforce_loss`、`estimate_gradient`、`train_bandit`、`group_advantages`、`verifiable_rewards`、`train_groups`）、gradient ascent、REINFORCE（Williams 1992）與 baseline（不改變期望值、降低變異；批次平均把自己算進去所以縮小 \\( (n-1)/n \\)）、`torch.Generator().manual_seed`、GRPO 的組內平均 baseline 與除以標準差（樣本標準差、`eps`）、全組獎勵相同時 advantage 是 0、一組 \\( G \\) 個回答至少一個答對的機率 \\( 1-(1-p)^G \\)、玩具題 RLVR（3 個 prompt、答對機率 50%／10%／1%；除以標準差時困難題 400 步 0.96～0.98，不除只有 0.02～0.03） |
+| 第 15 章第 4 集以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -310,6 +313,9 @@
 | perplexity 的單位、bits per byte、領域與 greedy 的陷阱 | 第 12 章第 1 集 | 只看 perplexity 或 loss |
 | benchmark、`load_mcq`、zero-shot 與 few-shot、`build_prompt`、亂猜的雜訊 | 第 12 章第 2 集 | 不談評測 |
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
+| policy、reward、bandit、policy gradient、`reinforce_loss`、`estimate_gradient` | 第 15 章第 1 集 | 只說「用獎勵訓練模型」，不談梯度怎麼來 |
+| REINFORCE、`train_bandit`、baseline 與變異 | 第 15 章第 2 集 | 不談 baseline |
+| GRPO、`group_advantages`、`verifiable_rewards`、`train_groups`、是否除以標準差 | 第 15 章第 3 集 | 只說 advantage 是獎勵減 baseline |
 
 ---
 
