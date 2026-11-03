@@ -1,5 +1,6 @@
 import json
 import math
+from dataclasses import replace
 
 import torch
 from torch import nn
@@ -7,7 +8,8 @@ from torch import nn
 from llmz.model import ModelConfig, TransformerLM
 import re
 
-from llmz.posttrain import KINDS, SFTConfig, Task, accuracy, chat_pieces, encode_chat, generate_replies, make_tasks, pad_batch, reward, sft_loss, task_messages, train_sft
+from llmz.posttrain import (KINDS, DPOConfig, Pair, SFTConfig, Task, accuracy, bradley_terry_loss, chat_pieces, dpo_loss, encode_chat, generate_replies, make_preferences,
+                            make_tasks, pad_batch, pair_batch, pair_logprobs, preference_rate, reward, sft_loss, task_messages, train_dpo, train_sft, wrong_answers)
 from llmz.tokenizer import Tokenizer, base_vocab
 
 END = "<|endoftext|>"
@@ -237,3 +239,147 @@ def test_unmasked_loss_trains_on_the_question_too(tmp_path):
     masked = train_sft(smoke_config(tmp_path, max_steps=1, out_dir=str(tmp_path / "a")), Tokenizer(base_vocab([END]), [], [END]))
     unmasked = train_sft(smoke_config(tmp_path, max_steps=1, out_dir=str(tmp_path / "b"), mask=False), Tokenizer(base_vocab([END]), [], [END]))
     assert masked[0]["loss"] != unmasked[0]["loss"]
+
+
+# ---- 第 14 章第 4、5 集：偏好學習 ----
+
+
+def test_bradley_terry_loss_is_log_2_when_both_rewards_are_equal():
+    assert abs(bradley_terry_loss(torch.tensor([3.0, -1.0]), torch.tensor([3.0, -1.0])).item() - math.log(2)) < 1e-6
+
+
+def test_bradley_terry_loss_matches_the_hand_calculation_and_shrinks_as_the_margin_grows():
+    # margin 1：-log sigmoid(1) = log(1 + e^-1) = 0.3132616875；平均兩筆（第二筆 margin 0 是 log 2）
+    want = (0.3132616875182228 + math.log(2)) / 2
+    assert abs(bradley_terry_loss(torch.tensor([2.0, 5.0]), torch.tensor([1.0, 5.0])).item() - want) < 1e-6
+    losses = [bradley_terry_loss(torch.tensor([m]), torch.tensor([0.0])).item() for m in [-2.0, 0.0, 2.0, 6.0]]
+    assert losses == sorted(losses, reverse=True)
+
+
+def test_bradley_terry_loss_gradient_raises_the_chosen_reward_and_lowers_the_rejected_one():
+    chosen, rejected = torch.tensor([0.0], requires_grad=True), torch.tensor([0.0], requires_grad=True)
+    bradley_terry_loss(chosen, rejected).backward()
+    assert abs(chosen.grad.item() + 0.5) < 1e-6 and abs(rejected.grad.item() - 0.5) < 1e-6  # margin 0：-sigmoid(0)、+sigmoid(0)
+
+
+def test_bradley_terry_loss_does_not_overflow_with_huge_margins():
+    loss = bradley_terry_loss(torch.tensor([1000.0, -1000.0]), torch.tensor([-1000.0, 1000.0]))
+    assert torch.isfinite(loss) and abs(loss.item() - 1000.0) < 1e-3  # 一個贏很多（0）、一個輸很多（2000），平均 1000
+
+
+def tensor(*values, grad=False):
+    return torch.tensor(list(values), requires_grad=grad)
+
+
+def test_dpo_loss_is_log_2_when_the_policy_has_not_moved_from_the_reference():
+    # policy == reference：不管 log 機率是多少，兩個 log 比值都是 0
+    assert abs(dpo_loss(tensor(-1.0, -4.0), tensor(-3.0, -2.0), tensor(-1.0, -4.0), tensor(-3.0, -2.0), beta=0.3).item() - math.log(2)) < 1e-6
+
+
+def test_dpo_loss_is_log_2_when_chosen_and_rejected_are_the_same_reply():
+    same = tensor(-2.5, -0.5)
+    assert abs(dpo_loss(same, same, tensor(-3.0, -1.0), tensor(-3.0, -1.0), beta=0.1).item() - math.log(2)) < 1e-6
+    assert abs(dpo_loss(tensor(-1.0), tensor(-3.0), tensor(-2.0), tensor(-2.0), beta=0.0).item() - math.log(2)) < 1e-6  # beta = 0 也是 log 2
+
+
+def test_dpo_loss_matches_the_hand_calculation():
+    # policy 比 reference：chosen 多 1、rejected 少 1，差 2；beta 0.5 -> sigmoid 裡是 1；loss = log(1 + e^-1)
+    assert abs(dpo_loss(tensor(-1.0), tensor(-3.0), tensor(-2.0), tensor(-2.0), beta=0.5).item() - 0.3132616875182228) < 1e-6
+
+
+def test_dpo_loss_gradient_raises_chosen_and_lowers_rejected_with_size_beta_over_2():
+    pc, pr = tensor(-2.0, grad=True), tensor(-2.0, grad=True)
+    dpo_loss(pc, pr, tensor(-2.0), tensor(-2.0), beta=0.5).backward()
+    assert abs(pc.grad.item() + 0.25) < 1e-6 and abs(pr.grad.item() - 0.25) < 1e-6  # -beta/2、+beta/2
+
+
+def test_dpo_loss_is_higher_when_the_reference_already_liked_the_chosen_reply_more():
+    # 同樣的 policy，reference 本來就更偏好 chosen -> policy 相對 reference 的進步比較少 -> loss 比較高
+    policy = (tensor(-1.0), tensor(-3.0))
+    fresh = dpo_loss(*policy, tensor(-1.0), tensor(-1.0), beta=0.5)
+    already = dpo_loss(*policy, tensor(-1.0), tensor(-3.0), beta=0.5)
+    assert already > fresh
+
+
+def test_wrong_answers_are_other_candidates_from_the_question():
+    for task in make_tasks(300, seed=4, kinds=("color", "who")):
+        wrong = wrong_answers(task)
+        assert wrong and task.answer not in wrong
+        assert all(re.search(rf"\b{w}\b", task.question) for w in wrong), task.question  # 候選都在題目裡
+        assert len(wrong) == (1 if task.kind == "color" else 2)
+    assert set(wrong_answers(make_tasks(1, seed=0, kinds=("add",))[0])) == set(WORDS) - {make_tasks(1, seed=0, kinds=("add",))[0].answer}
+
+
+def test_make_preferences_pairs_the_correct_answer_with_a_wrong_one_deterministically():
+    pairs = make_preferences(300, seed=2)
+    assert pairs == make_preferences(300, seed=2) and pairs != make_preferences(300, seed=3)
+    for pair, task in zip(pairs, make_tasks(300, seed=2)):
+        assert (pair.kind, pair.question, pair.chosen) == (task.kind, task.question, task.answer)
+        assert pair.rejected in wrong_answers(task)
+    who = [p for p in pairs if p.kind == "who"]
+    assert len({p.rejected for p in who}) > 5  # 兩個錯的名字都會被挑到，不是永遠同一個位置
+
+
+def test_make_preferences_train_and_valid_never_overlap_and_kinds_can_be_limited():
+    train = {p.question for p in make_preferences(2000, seed=0, split="train")}
+    valid = {p.question for p in make_preferences(500, seed=0, split="valid")}
+    assert valid and not train & valid
+    assert {p.kind for p in make_preferences(100, seed=0, kinds=("color", "who"))} == {"color", "who"}
+
+
+def test_pair_batch_puts_chosen_rows_first_and_trains_only_the_reply():
+    pairs = [Pair("color", "Q one?", "red", "blue"), Pair("color", "Q two longer?", "green", "pink")]
+    ids, mask = pair_batch(TOK, pairs)
+    assert ids.shape[0] == 4
+    for row, reply in enumerate(["red", "green", "blue", "pink"]):  # 前兩列 chosen、後兩列 rejected
+        assert TOK.decode([i for i, m in zip(ids[row].tolist(), mask[row].tolist()) if m][:-1]) == " " + reply
+
+
+def test_pair_logprobs_matches_scoring_each_reply_separately():
+    model, tok = tiny_model_and_tokenizer()
+    pairs = make_preferences(5, seed=0)  # 題目長度不同 -> 要補 0，補的部分不能影響答案
+    chosen, rejected = pair_logprobs(model, *pair_batch(tok, pairs))
+    assert chosen.shape == rejected.shape == (5,)
+    for i, pair in enumerate(pairs):
+        for got, reply in [(chosen[i], pair.chosen), (rejected[i], pair.rejected)]:
+            ids, mask = encode_chat(tok, task_messages(Task(pair.kind, pair.question, reply), with_answer=True))
+            want = sum(torch.log_softmax(model(torch.tensor([ids]))[0, t - 1], -1)[ids[t]] for t in range(len(ids)) if mask[t])
+            assert abs(got.item() - want.item()) < 1e-3
+
+
+def test_preference_rate_is_the_fraction_of_pairs_where_chosen_has_the_higher_logprob():
+    model, tok = tiny_model_and_tokenizer()
+    pairs = make_preferences(12, seed=1)
+    with torch.no_grad():
+        chosen, rejected = pair_logprobs(model, *pair_batch(tok, pairs))
+    want = (chosen > rejected).sum().item() / len(pairs)
+    assert preference_rate(model, tok, pairs, chunk=5) == want  # 分批算（5、5、2）答案不變
+    assert preference_rate(model, tok, [Pair(p.kind, p.question, p.chosen, p.chosen) for p in pairs]) == 0.0  # 兩邊相同：平手不算贏
+
+
+def dpo_smoke_config(tmp_path, **changes) -> DPOConfig:
+    cfg = dict(sft_path="", out_dir=str(tmp_path / "dpo"), model=ModelConfig(vocab_size=257, context_length=256, d_model=64, n_layers=2, n_heads=4, d_ff=128),
+               n_train=16, n_valid=20, batch_size=16, max_steps=40, lr_max=1e-3, lr_min=1e-4, warmup_steps=2, beta=0.1,
+               log_every=1, eval_every=40, device="cpu")
+    return DPOConfig(**(cfg | changes))
+
+
+def test_smoke_dpo_starts_at_log_2_then_learns_the_pairs(tmp_path):
+    records = train_dpo(dpo_smoke_config(tmp_path), Tokenizer(base_vocab([END]), [], [END]))
+    assert abs(records[0]["loss"] - math.log(2)) < 1e-4  # 第 1 步：policy 就是 reference
+    assert records[-1]["loss"] < 0.3  # 16 題反覆看 40 步，背得起來
+    last = records[-1]
+    assert last["chosen_gain"] > 0 > last["rejected_gain"]  # chosen 的 log 機率比 reference 高、rejected 比較低
+    assert last["train_preference"] > records[0]["train_preference"] and 0.0 <= last["val_preference"] <= 1.0
+    model = TransformerLM(dpo_smoke_config(tmp_path).model)
+    model.load_state_dict(torch.load(tmp_path / "dpo" / "model.pt"))
+
+
+def test_dpo_starts_from_the_sft_checkpoint(tmp_path):
+    torch.manual_seed(7)
+    cfg = dpo_smoke_config(tmp_path, lr_max=1e-12, lr_min=1e-13, max_steps=3)
+    start = TransformerLM(cfg.model).state_dict()
+    torch.save(start, tmp_path / "sft.pt")
+    train_dpo(replace(cfg, sft_path=str(tmp_path / "sft.pt")), Tokenizer(base_vocab([END]), [], [END]))
+    end = torch.load(tmp_path / "dpo" / "model.pt")
+    assert all(torch.allclose(start[k], end[k], atol=1e-8) for k in start)  # 學習率小到幾乎沒動：載入的是我們給的檢查點，不是另一組隨機初始化

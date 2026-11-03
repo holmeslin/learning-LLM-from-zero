@@ -3044,6 +3044,82 @@ size, bands, rows = min((b * r, b, r) for b in range(1, 513) for r in range(1, 5
 print(f"最短的簽章：b={bands}, r={rows}，{size} 格；P(0.8)={lsh_probability(0.8, bands, rows):.3f}，P(0.5)={lsh_probability(0.5, bands, rows):.3f}")
 ```
 
+### 第 10 集 組成資料管線 — 狀態：可用
+
+**題目**
+
+第 10 集說：會改文字的步驟（`dedup_lines`）要放在判斷文字的步驟（`keep_gopher`）前面。造一組 5 頁的網頁，每頁有同樣一行選單加上自己的內容，讓 `dedup_lines` 與 `keep_gopher` 兩種順序留下的頁數不同。用 `run_pipeline`（`size` 傳「詞數」）印出每一步之後的頁數與詞數，並且把最後的頁面再用 `gopher_check` 檢查一次。語言辨識與 `keep_gopher` 換順序，也會不同嗎？為什麼？
+
+**練習目標**：用 `run_pipeline` 看見「改文字的步驟」與「判斷的步驟」不能交換，而只做判斷的步驟可以。
+
+**批改重點**：每頁的內容是 44 個詞、共用的選單 12 個詞，總共 56 個詞，剛好過 Gopher 的 50 個詞的下限；拿掉選單之後只剩 44 個詞。先 `dedup_lines`：5 頁（285 個詞）→ 5 頁（220 個詞）→ 0 頁。先 Gopher：5 → 5（285）→ 5（220），最後的 5 頁用 `gopher_check` 再檢查，全部沒通過（詞數不到 50）。語言辨識與 `keep_gopher` 都只判斷、不改文字，頁面通不通過只看那一頁自己，所以換順序，留下的是同一批頁面。常見錯誤：選單只出現在 4 頁以下（`min_pages=5` 的門檻沒到，選單不會被拿掉）；兩種順序的內容與詞數，要用同一組頁面比，不要各造一組。
+
+**參考答案**
+
+```python
+from llmz.pipeline import Page, dedup_lines, gopher_check, keep_gopher, run_pipeline
+
+shared = "the shop is open and we have the best prices for you today"  # 每一頁都有的選單，12 個詞
+pages = []
+for i in range(5):
+    body = " ".join([f"item{i}-{j}" for j in range(42)] + ["the", "and"])  # 每一頁自己的內容，44 個詞
+    pages.append(Page(f"http://shop.example/{i}", f"{shared}\n{body}"))
+
+orders = {
+    "dedup_lines → Gopher": [("dedup_lines", dedup_lines), ("Gopher", keep_gopher)],
+    "Gopher → dedup_lines": [("Gopher", keep_gopher), ("dedup_lines", dedup_lines)],
+}
+for name, steps in orders.items():
+    kept, report = run_pipeline(pages, steps, size=lambda text: len(text.split()))
+    print(f"{name}：" + " → ".join(f"{r.docs} 頁（{r.size} 個詞）" for r in report))
+    print("  最後的頁面通過 Gopher：", [gopher_check(p.text)[0] for p in kept])
+```
+
+### 第 11 集 資料混合與合成資料 — 狀態：可用
+
+**題目**
+
+第 11 集談了混合權重，但沒有寫取樣器。寫 `mixed_batch(sources, weights, batch_size, context_length, rng)`：先用 `rng.multinomial` 決定 batch 裡每個來源各幾筆，再對各來源呼叫第 5 章的 `get_batch`，把結果接起來。造兩個假的 token 檔：大的來源 40 萬個 token（內容全是 1），小的來源 1 萬個 token（內容全是 2），這樣看第一個 token 就知道那一筆來自哪裡。小來源的權重分別是 10% 與 5%，訓練 1,000 步（batch 32、context 16），數出來自小來源的樣本有幾筆，以及小來源被看了幾遍。如果小來源最多只看 4 遍，權重最高可以是多少？
+
+**練習目標**：把「權重」變成取樣器，並算出權重、資料量與重複次數的關係：權重越高，小來源重複越多遍。
+
+**批改重點**：權重 10% 時有 3,287 / 32,000 筆來自小來源（10.27%），小來源被看了 5.26 遍；權重 5% 時有 1,539 筆（4.81%），看了 2.46 遍。看的遍數是「來自小來源的筆數 × context 長度 ÷ 小來源的 token 數」。最多看 4 遍的話，權重最高約 7.81%（\\( 4 \times 10000 \div (1000 \times 32 \times 16) \\)）。實際比例與權重不完全一樣：每一筆是獨立抽的，多出來的 0.27% 與少掉的 0.19% 是抽樣的隨機誤差（1,000 步、32,000 筆）。常見錯誤：用 `torch.multinomial` 逐筆抽，慢又難重現（`rng.multinomial` 一次決定各來源幾筆，種子固定，結果就固定）；算遍數時忘了乘 context 長度。
+
+**參考答案**
+
+```python
+import numpy as np
+import torch
+
+from llmz.data import get_batch
+
+big = np.ones(400_000, dtype=np.uint16)  # 大的來源：內容全是 1，方便看每一筆來自哪裡
+small = np.full(10_000, 2, dtype=np.uint16)  # 小的來源：內容全是 2
+
+
+def mixed_batch(sources, weights, batch_size, context_length, rng):
+    """先決定 batch 裡每個來源各幾筆，再對各來源呼叫 get_batch，接起來。"""
+    counts = rng.multinomial(batch_size, weights)
+    parts = [get_batch(data, n, context_length, torch.device("cpu")) for data, n in zip(sources, counts) if n]
+    return torch.cat([x for x, _ in parts]), torch.cat([y for _, y in parts])
+
+
+rng = np.random.default_rng(0)
+steps, batch_size, context_length = 1000, 32, 16
+for weight in [0.1, 0.05]:
+    from_small = 0
+    for _ in range(steps):
+        x, y = mixed_batch([big, small], [1 - weight, weight], batch_size, context_length, rng)
+        from_small += int((x[:, 0] == 2).sum())
+    samples = steps * batch_size
+    tokens_seen = from_small * context_length
+    print(f"權重 {weight:.0%}：{from_small:,} / {samples:,} 筆來自小來源（{from_small / samples:.2%}），"
+          f"小來源被看了 {tokens_seen / len(small):.2f} 遍")
+
+total_tokens = steps * batch_size * context_length
+print(f"小來源最多看 4 遍：權重最高 {4 * len(small) / total_tokens:.2%}")
+```
+
 ## 第 14 章 後訓練：SFT 與偏好學習
 
 ### 第 1 集 base model 與指令模型 — 狀態：可用
@@ -3135,6 +3211,77 @@ for n_train in [16, 1000]:
     )
     last = train_sft(cfg, tokenizer)[-1]
     print(f"n_train={n_train:4d}：訓練 loss {last['loss']:.2f}，val_loss {last['val_loss']:.2f}")
+```
+
+### 第 4 集 reward model 的想法 — 狀態：可用
+
+**題目**
+
+寫一個「只看回覆、不看題目」的獎勵模型：每個顏色一個分數（`nn.Parameter`，10 個數字，從 0 開始），用 `make_preferences(2000, seed=0, split="train", kinds=("color",))` 與 `bradley_terry_loss` 訓練 300 步（`AdamW`，`lr=0.05`）。算分數較高的是 `chosen` 的比例，訓練的 2000 對與 `make_preferences(1000, seed=1, split="valid", kinds=("color",))` 的 1000 對各算一次。這個比例會比 50% 高多少？為什麼？
+
+**練習目標**：獎勵模型要看到提示。只看回覆的分數，在 `chosen` 與 `rejected` 的分布一樣的資料上，不可能比亂猜好。
+
+**批改重點**：訓練集 53.6%，驗證集 50.7%，最後的 loss 是 0.6891，幾乎就是 \\( \log 2 = 0.6931 \\)。分數範圍只有 \\( -0.25 \\) 到 \\( 0.24 \\)。`color` 題的 `chosen` 是題目裡被問的那樣東西的顏色，`rejected` 是另一個，兩邊的顏色分布一樣（每個顏色當 `chosen` 與當 `rejected` 的機會均等），所以某個顏色「比較好」沒有道理；訓練集上的 3.6 個百分點是 300 步 `AdamW` 對 2000 對資料的雜訊擬合，驗證集上就沒了。要分辨哪個顏色對，得知道題目問的是哪一樣東西。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import AdamW
+from llmz.posttrain import COLORS, bradley_terry_loss, make_preferences
+
+train = make_preferences(2000, seed=0, split="train", kinds=("color",))
+valid = make_preferences(1000, seed=1, split="valid", kinds=("color",))
+index = {c: i for i, c in enumerate(COLORS)}
+
+
+def ids(pairs):
+    return torch.tensor([index[p.chosen] for p in pairs]), torch.tensor([index[p.rejected] for p in pairs])
+
+
+scores = nn.Parameter(torch.zeros(len(COLORS)))  # 獎勵模型：每個顏色一個分數，不看題目
+optimizer = AdamW([scores], lr=0.05, weight_decay=0.0)
+train_chosen, train_rejected = ids(train)
+for step in range(300):
+    loss = bradley_terry_loss(scores[train_chosen], scores[train_rejected])
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+for name, pairs in [("train", train), ("valid", valid)]:
+    chosen, rejected = ids(pairs)
+    rate = (scores[chosen] > scores[rejected]).float().mean().item()
+    print(f"{name}：{len(pairs)} 對，分數較高的是 chosen 的比例 {rate:.1%}")
+print("loss", round(loss.item(), 4), "（log 2 = 0.6931）")
+print("分數範圍", round(scores.min().item(), 2), "到", round(scores.max().item(), 2))
+```
+
+### 第 5 集 DPO 推導與玩具版實作 — 狀態：可用
+
+**題目**
+
+policy 比 reference 多給 `chosen` 的 log 機率 2、少給 `rejected` 2（reference 兩個都是 \\( -3 \\)，policy 是 \\( -1 \\) 與 \\( -5 \\)）。對 \\( \beta \in \{0.01, 0.1, 1, 5\} \\)，用 `dpo_loss` 各算 loss，並用 `backward()` 算對 `policy_chosen` 的梯度。loss 隨 \\( \beta \\) 怎麼變？梯度呢？為什麼？
+
+**練習目標**：\\( \beta \\) 同時放大隱含獎勵與壓縮 sigmoid 的有效範圍；loss 與梯度的大小不是單調的。
+
+**批改重點**：loss 是 0.6733、0.5130、0.0181、0.0000：\\( \beta \\) 越大越小，因為隱含獎勵的差是 \\( \beta \times 4 \\)，sigmoid 越快飽和。梯度是 \\( -0.0049 \\)、\\( -0.0401 \\)、\\( -0.0180 \\)、\\( -0.0000 \\)：先變大再變小。\\( \beta \\) 小時，loss 幾乎是 \\( \log 2 \\)，梯度大約是 \\( -\beta \sigma(-4\beta) \approx -\beta/2 \\)，隨 \\( \beta \\) 增加；\\( \beta \\) 大時 sigmoid 已經飽和，這一對「已經做對了」，梯度趨近 0，policy 不再被往外推，停在離 reference 不遠的地方。這就是 \\( \beta \\) 控制「policy 可以離 reference 多遠」的方式。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.posttrain import dpo_loss
+
+ref_chosen, ref_rejected = torch.tensor([-3.0]), torch.tensor([-3.0])
+for beta in [0.01, 0.1, 1.0, 5.0]:
+    policy_chosen = torch.tensor([-1.0], requires_grad=True)  # chosen 比 reference 高 2
+    policy_rejected = torch.tensor([-5.0], requires_grad=True)  # rejected 比 reference 低 2
+    loss = dpo_loss(policy_chosen, policy_rejected, ref_chosen, ref_rejected, beta)
+    loss.backward()
+    print(f"beta {beta:5.2f}：loss {loss.item():.4f}　對 chosen 的梯度 {policy_chosen.grad.item():+.4f}")
 ```
 
 ## 第 15 章 後訓練：RL 與可驗證獎勵

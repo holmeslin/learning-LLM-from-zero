@@ -3,6 +3,7 @@
 import json
 import os
 import random
+import re
 import time
 import zlib
 from dataclasses import asdict, dataclass, field
@@ -12,6 +13,7 @@ import torch
 from torch import Tensor, nn
 
 from llmz.evaluation import exact_match, sequence_logprob
+from llmz.functional import logsumexp
 from llmz.device import get_device
 from llmz.inference import generate_cached
 from llmz.model import ModelConfig, TransformerLM
@@ -257,3 +259,150 @@ def train_sft(cfg: SFTConfig, tokenizer=None) -> list[dict]:
         json.dump(asdict(cfg), f, indent=2)
     return records
 # ANCHOR_END: train_sft
+
+
+# ANCHOR: bradley_terry
+def bradley_terry_loss(r_chosen: Tensor, r_rejected: Tensor) -> Tensor:
+    """Bradley–Terry：好回答贏的機率是 sigmoid(r_chosen - r_rejected)，loss 是它的 -log，整批取平均。
+    -log sigmoid(x) = log(1 + e^-x) = logsumexp([0, -x])，用第 1 章的 logsumexp 算，x 很大或很小都不會溢位。"""
+    margin = r_chosen - r_rejected
+    return logsumexp(torch.stack([torch.zeros_like(margin), -margin]), dim=0).mean()
+# ANCHOR_END: bradley_terry
+
+
+# ANCHOR: dpo_loss
+def dpo_loss(policy_chosen: Tensor, policy_rejected: Tensor, ref_chosen: Tensor, ref_rejected: Tensor, beta: float = 0.1) -> Tensor:
+    """DPO：四個都是整段回覆的 log 機率 (B,)。policy 相對 reference 的 log 比值乘上 beta，就是「隱含的獎勵」，
+    再丟進 Bradley–Terry loss。policy 還沒離開 reference（兩個 log 比值都是 0）時，loss 是 log 2。"""
+    implicit_chosen = beta * (policy_chosen - ref_chosen)
+    implicit_rejected = beta * (policy_rejected - ref_rejected)
+    return bradley_terry_loss(implicit_chosen, implicit_rejected)
+# ANCHOR_END: dpo_loss
+
+
+# ANCHOR: preference_data
+class Pair(NamedTuple):
+    kind: str
+    question: str
+    chosen: str  # 標準答案
+    rejected: str  # 同一題的另一個候選：錯的
+
+
+def wrong_answers(task: Task) -> list[str]:
+    """這一題的錯誤答案：color 與 who 是題目裡出現的其他顏色與名字（答案一定在題目裡，所以「錯」也要是題目裡的東西），其他題型是別的數字。"""
+    pool = {"color": COLORS, "who": list(NAMES)}.get(task.kind, NUMBERS)
+    if task.kind in ("color", "who"):
+        pool = [w for w in pool if w in re.findall(r"\w+", task.question)]
+    return [w for w in pool if w != task.answer]
+
+
+def make_preferences(n: int, seed: int = 0, split: str = "train", kinds: tuple[str, ...] = tuple(KINDS)) -> list[Pair]:
+    """和 make_tasks 一樣的題目（同樣的 seed、split、kinds），每一題配一個隨機挑的錯誤答案。"""
+    rng = random.Random(seed)
+    return [Pair(t.kind, t.question, t.answer, rng.choice(wrong_answers(t))) for t in make_tasks(n, seed, split, kinds)]
+# ANCHOR_END: preference_data
+
+
+# ANCHOR: pair_logprobs
+def pair_batch(tokenizer, pairs: list[Pair]) -> tuple[Tensor, Tensor]:
+    """每個 Pair 排成兩條對話（題目相同，回覆一個是 chosen、一個是 rejected），疊成 (2B, T)：前 B 列是 chosen，後 B 列是 rejected。"""
+    examples = [encode_chat(tokenizer, task_messages(Task(p.kind, p.question, getattr(p, side)), with_answer=True)) for side in ("chosen", "rejected") for p in pairs]
+    return pad_batch(examples)
+
+
+def pair_logprobs(model: nn.Module, ids: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
+    """pair_batch 的結果 -> 每個 Pair 的 chosen 與 rejected 回覆的 log 機率，各 (B,)。有梯度。"""
+    return sequence_logprob(model, ids, mask).chunk(2)
+
+
+@torch.no_grad()
+def preference_rate(model: nn.Module, tokenizer, pairs: list[Pair], chunk: int = 50) -> float:
+    """模型給 chosen 的 log 機率比 rejected 高的 Pair 佔幾成（平手不算）。每次只算 chunk 個 Pair，logits 太大會爆記憶體。"""
+    device = next(model.parameters()).device
+    wins = 0
+    for start in range(0, len(pairs), chunk):
+        ids, mask = pair_batch(tokenizer, pairs[start : start + chunk])
+        chosen, rejected = pair_logprobs(model, ids.to(device), mask.to(device))
+        wins += int((chosen > rejected).sum())
+    return wins / len(pairs)
+# ANCHOR_END: pair_logprobs
+
+
+# ANCHOR: train_dpo
+@dataclass
+class DPOConfig:
+    sft_path: str = "runs/sft/model.pt"  # policy 與 reference 都從這裡開始；空字串 = 隨機初始化（smoke 用）
+    tokenizer_path: str = "data/tokenizer.json"
+    out_dir: str = "runs/dpo"
+    model: ModelConfig = field(default_factory=ModelConfig)
+    kinds: str = "color,who"  # 偏好資料的題型，逗號分隔
+    n_train: int = 20000  # 訓練的 Pair 數
+    n_valid: int = 200
+    batch_size: int = 32
+    max_steps: int = 1000
+    beta: float = 0.1
+    lr_max: float = 5e-5  # 比 SFT 的 1e-4 小：太大時 policy 一下子離 reference 太遠，回答整個壞掉（第 5 集量過）
+    lr_min: float = 5e-6
+    warmup_steps: int = 20
+    grad_clip: float = 1.0
+    log_every: int = 50
+    eval_every: int = 250
+    seed: int = 0
+    device: str = ""  # 空字串代表用 get_device()
+
+
+def train_dpo(cfg: DPOConfig, tokenizer=None) -> list[dict]:
+    """DPO 主迴圈：和 train_sft 一樣的五步，差在每步要多算一次凍結的 reference（沒梯度），loss 換成 dpo_loss。回傳 log 紀錄。"""
+    torch.manual_seed(cfg.seed)
+    device = torch.device(cfg.device) if cfg.device else get_device()
+    os.makedirs(cfg.out_dir, exist_ok=True)
+    tokenizer = tokenizer or Tokenizer.load(cfg.tokenizer_path)
+    kinds = tuple(cfg.kinds.split(","))
+    train_pairs = make_preferences(cfg.n_train, seed=cfg.seed, split="train", kinds=kinds)
+    valid_pairs = make_preferences(cfg.n_valid, seed=cfg.seed + 1, split="valid", kinds=kinds)
+    valid_tasks = make_tasks(cfg.n_valid, seed=cfg.seed + 1, split="valid", kinds=kinds)
+
+    model = TransformerLM(cfg.model).to(device)
+    if cfg.sft_path:
+        model.load_state_dict(torch.load(cfg.sft_path, map_location=device))
+    reference = TransformerLM(cfg.model).to(device)
+    reference.load_state_dict(model.state_dict())  # 起點一樣；之後 policy 會動，reference 不動
+    reference.eval()
+    optimizer = AdamW(model.parameters(), lr=cfg.lr_max, weight_decay=0.0)
+    rng = random.Random(cfg.seed)
+    records, log_file, t0 = [], open(os.path.join(cfg.out_dir, "log.jsonl"), "w"), time.time()
+    for step in range(1, cfg.max_steps + 1):
+        lr = lr_cosine_schedule(step, cfg.lr_max, cfg.lr_min, cfg.warmup_steps, cfg.max_steps)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        ids, mask = pair_batch(tokenizer, rng.sample(train_pairs, cfg.batch_size))
+        ids, mask = ids.to(device), mask.to(device)
+        with torch.no_grad():
+            ref_chosen, ref_rejected = pair_logprobs(reference, ids, mask)
+        policy_chosen, policy_rejected = pair_logprobs(model, ids, mask)
+        loss = dpo_loss(policy_chosen, policy_rejected, ref_chosen, ref_rejected, cfg.beta)
+        loss.backward()
+        grad_norm = clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if step % cfg.log_every == 0 or step == cfg.max_steps:
+            rec = {"step": step, "loss": round(loss.item(), 4), "lr": lr, "grad_norm": round(grad_norm.item(), 3), "time": round(time.time() - t0, 1),
+                   "chosen_gain": round((policy_chosen - ref_chosen).mean().item(), 3),  # policy 比 reference 多給 chosen 幾個 log 機率
+                   "rejected_gain": round((policy_rejected - ref_rejected).mean().item(), 3),
+                   "train_preference": (policy_chosen > policy_rejected).float().mean().item()}
+            if step % cfg.eval_every == 0 or step == cfg.max_steps:
+                model.eval()
+                rec["val_preference"] = preference_rate(model, tokenizer, valid_pairs)
+                rec["val_accuracy"] = accuracy(model, tokenizer, valid_tasks)
+                model.train()
+            records.append(rec)
+            log_file.write(json.dumps(rec) + "\n")
+            log_file.flush()
+            print(rec)
+    log_file.close()
+    torch.save(model.state_dict(), os.path.join(cfg.out_dir, "model.pt"))
+    with open(os.path.join(cfg.out_dir, "config.json"), "w") as f:
+        json.dump(asdict(cfg), f, indent=2)
+    return records
+# ANCHOR_END: train_dpo

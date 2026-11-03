@@ -14,9 +14,9 @@
 2. **比值**：一批 rollout 會連續更新好幾次（下一集 `epochs=2`），第二次更新時，模型已經不是當初取樣的那個模型了。用「取樣時的模型」\\( \pi_{\text{old}} \\) 與「現在的模型」\\( \pi_\theta \\) 的比值 \\( \rho_t = \pi_\theta(o_t) / \pi_{\text{old}}(o_t) \\) 來修正。它對 log 機率的梯度是 \\( \nabla \rho = \rho \nabla \log \pi_\theta \\)，剛取樣完（\\( \rho = 1 \\)）時，和 REINFORCE 的 \\( A \nabla \log \pi \\) 一模一樣。
 3. **clip**：比值離 1 太遠，就不再往同一個方向推，免得一批資料把模型推得太遠。
 
-合起來（DeepSeekMath 論文的 GRPO，這裡省略它再加上去的 KL 懲罰項；\\( G \\) 條回答，第 \\( i \\) 條有 \\( |o_i| \\) 個 token）：
+合起來（DeepSeekMath 論文的 GRPO，這裡省略它再加上去的 KL 懲罰項，也就是第 14 章第 5 集 RLHF 目標裡 \\( \beta \\) 倍的 KL（policy 與 reference 模型的距離）；\\( G \\) 條回答，第 \\( i \\) 條有 \\( |o_i| \\) 個 token）：
 
-\\[ \mathcal{L} = -\frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min\big( \rho_{i,t} A_i,\ \text{clip}(\rho_{i,t},\, 1-\varepsilon,\, 1+\varepsilon)\, A_i \big) \\]
+\\[ \mathcal{L} = -\frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min\big( \rho_{i,t} A_i,\ \text{clip}(\rho_{i,t}, 1-\varepsilon, 1+\varepsilon) A_i \big) \\]
 
 \\( \text{clip}(\rho, 1-\varepsilon, 1+\varepsilon) \\) 把 \\( \rho \\) 夾在 \\( [1-\varepsilon, 1+\varepsilon] \\) 之間，\\( \varepsilon \\) 預設 0.2。
 
