@@ -147,6 +147,8 @@
 - [資料：從網頁到訓練集](chapter13/README.md)
     - [Common Crawl 與 WARC](chapter13/01_common_crawl_warc.md)
     - [HTML 轉文字](chapter13/02_html_to_text.md)
+    - [Gopher 品質規則](chapter13/06_gopher_rules.md)
+    - [品質分類器](chapter13/07_quality_classifier.md)
 - [後訓練：SFT 與偏好學習]()
 - [後訓練：RL 與可驗證獎勵](chapter15/README.md)
     - [policy gradient 直覺](chapter15/01_policy_gradient_intuition.md)
