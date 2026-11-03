@@ -3,13 +3,19 @@ import random
 
 import numpy as np
 import pytest
+import torch
+import torch.nn.functional as F
 
 from llmz.pipeline import (
     Page,
+    QualityClassifier,
+    binary_cross_entropy,
     count_lines,
     decode_html,
     dedup_lines,
     drop_near_duplicates,
+    gopher_check,
+    hash_ngrams,
     html_to_text,
     iter_pages,
     iter_warc_records,
@@ -21,6 +27,7 @@ from llmz.pipeline import (
     read_pages,
     shingles,
     split_http_response,
+    train_quality,
     verify_pairs,
     write_pages,
 )
@@ -136,6 +143,178 @@ def test_write_and_read_pages_roundtrip(tmp_path):
     assert write_pages(pages, path) == 2
     assert path.read_text(encoding="utf-8").count("\n") == 2  # 一頁一行，文字裡的換行被跳脫
     assert list(read_pages(path)) == pages
+
+
+# ---- 第 13 章第 6 集：Gopher 品質規則 ----
+
+
+def words_doc(words: list[str], per_line: int = 10) -> str:
+    return "\n".join(" ".join(words[i : i + per_line]) for i in range(0, len(words), per_line))
+
+
+def plain_words(n: int) -> list[str]:
+    """n 個「正常」的詞：含 the、and 兩個停用詞，平均詞長 3.875，全是字母。"""
+    base = ["the", "dog", "and", "that", "bird", "walked", "to", "market"]
+    return [base[i % len(base)] for i in range(n)]
+
+
+def failed_rules(words: list[str], per_line: int = 10) -> list[str]:
+    passed, failed = gopher_check(words_doc(words, per_line))
+    assert passed == (not failed)
+    return failed
+
+
+def test_gopher_passes_ordinary_text():
+    assert gopher_check(words_doc(plain_words(80))) == (True, [])
+
+
+def test_gopher_word_count_boundaries():
+    assert failed_rules(plain_words(49)) == ["word_count"]
+    assert failed_rules(plain_words(50)) == []
+    assert failed_rules(plain_words(100_000), per_line=100) == []
+    assert failed_rules(plain_words(100_001), per_line=100) == ["word_count"]
+
+
+def test_gopher_mean_word_length_boundaries():
+    def mean_len(total_chars: int) -> list[str]:  # 50 個詞：the、and 加 47 個 10 字元的詞，最後一個詞補到總字元數
+        return ["the", "and"] + ["a" * 10] * 47 + ["a" * (total_chars - 6 - 470)]
+
+    assert failed_rules(mean_len(500)) == []  # 平均剛好 10
+    assert failed_rules(mean_len(501)) == ["mean_word_length"]
+    assert failed_rules(["the", "and"] + ["cat"] * 48) == []  # 平均剛好 3
+    assert failed_rules(["the", "and"] + ["cat"] * 47 + ["at"]) == ["mean_word_length"]
+
+
+def test_gopher_symbol_ratio_boundaries():
+    for symbol, name in [("#", "hash"), ("...", "ellipsis"), ("…", "ellipsis")]:
+        words = plain_words(60)
+        for i in range(6):  # 6 / 60 = 0.1：不算「大於」
+            words[i] = symbol + words[i]
+        assert failed_rules(words) == [], name
+        words[6] = symbol + words[6]  # 7 / 60 > 0.1
+        assert failed_rules(words) == ["symbol_ratio"], name
+
+
+def test_gopher_symbol_ratio_hash_and_ellipsis_are_counted_separately():
+    words = plain_words(60)
+    for i in range(6):
+        words[i] = "#" + words[i]
+        words[i + 6] = words[i + 6] + "…"  # 各 6 個：合起來 0.2，但各自都沒超過 0.1
+    assert failed_rules(words, per_line=1000) == []  # 全部放同一行，不觸發逐行規則
+
+
+def test_gopher_bullet_lines_boundaries():
+    lines = ["the dog and that bird walked to market again today"] * 10  # 一行 10 個詞，共 100 個詞
+    assert gopher_check("\n".join(["• " + l for l in lines[:9]] + lines[9:])) == (True, [])  # 9/10 = 0.9：不算「超過」
+    assert gopher_check("\n".join("• " + l for l in lines)) == (False, ["bullet_lines"])
+    assert gopher_check("\n".join("- " + l for l in lines)) == (False, ["bullet_lines"])
+
+
+def test_gopher_ellipsis_lines_boundaries():
+    lines = ["the dog and that bird walked to market again today"] * 10
+    assert gopher_check("\n".join([l + "..." for l in lines[:3]] + lines[3:])) == (True, [])  # 3/10 = 0.3：不算「超過」
+    assert gopher_check("\n".join([l + "…  " for l in lines[:4]] + lines[4:])) == (False, ["ellipsis_lines"])  # 行尾空白不影響
+
+
+def test_gopher_alphabetic_word_boundaries():
+    words = plain_words(50)
+    for i in range(10):  # 40/50 = 0.8 的詞有字母：剛好達標
+        words[i] = "1234"
+    assert failed_rules(words) == []
+    words[10] = "1234"  # 39/50
+    assert failed_rules(words) == ["alpha_words"]
+
+
+def test_gopher_stop_word_boundaries():
+    words = ["cat"] * 60
+    assert failed_rules(words) == ["stop_words"]
+    assert failed_rules(["the"] * 30 + words) == ["stop_words"]  # 同一個停用詞出現再多次也只算一個
+    assert failed_rules(["The,"] + ["and."] + words) == []  # 不分大小寫，標點不算
+    assert failed_rules(["the"] + ["cat"] * 59 + ["With"]) == []
+
+
+def test_gopher_reports_every_failed_rule():
+    passed, failed = gopher_check("")  # 空字串不能除以 0
+    assert not passed
+    assert failed == ["word_count", "mean_word_length", "alpha_words", "stop_words"]
+    assert gopher_check("12 34 56")[1] == ["word_count", "mean_word_length", "alpha_words", "stop_words"]
+
+
+# ---- 第 13 章第 7 集：品質分類器 ----
+
+
+def test_hash_ngrams_is_stable_across_processes():
+    assert hash_ngrams("hello", 10**6) == [60870]  # zlib.crc32(b"hello") = 907060870（公開的校驗值）；Python 內建的 hash() 每次執行都不一樣，不能用
+
+
+def test_hash_ngrams_makes_unigrams_then_bigrams():
+    ids = hash_ngrams("a b c", 1 << 20)
+    assert ids[:3] == [hash_ngrams(w, 1 << 20)[0] for w in "abc"]
+    assert ids[3:] == [hash_ngrams("a b", 1 << 20)[-1], hash_ngrams("b c", 1 << 20)[-1]]
+    assert len(ids) == 5
+    assert hash_ngrams("a b", 1 << 20)[-1] != hash_ngrams("b a", 1 << 20)[-1]  # 順序不同，bigram 就不同
+    assert all(0 <= i < 7 for i in hash_ngrams("some text with several words", 7))  # 一定落在 [0, n_buckets)
+
+
+def test_hash_ngrams_normalizes_and_truncates():
+    assert hash_ngrams("The  CAT, sat!", 1000) == hash_ngrams("the cat sat", 1000)  # 小寫、標點與空白不算
+    assert hash_ngrams("", 1000) == [] and hash_ngrams("?!", 1000) == []
+    assert len(hash_ngrams("w " * 1000, 1000)) == 256 + 255  # 只看前 256 個詞
+    assert len(hash_ngrams("w " * 1000, 1000, max_words=10)) == 10 + 9
+
+
+def test_quality_classifier_averages_the_weights_of_a_documents_ngrams():
+    model = QualityClassifier(8)
+    with torch.no_grad():
+        model.weight[3], model.weight[5], model.bias[...] = 2.0, -1.0, 0.5
+    ids = torch.tensor([[3, 5, 0], [5, 5, 5]])
+    mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])  # 第 1 篇最後一格是 padding，不能算進去
+    assert torch.allclose(model(ids, mask), torch.tensor([(2 - 1) / 2 + 0.5, -1 + 0.5]))
+
+
+def test_binary_cross_entropy_matches_torch():
+    torch.manual_seed(0)
+    logits, labels = torch.randn(32) * 3, torch.randint(0, 2, (32,))
+    assert torch.allclose(binary_cross_entropy(logits, labels), F.binary_cross_entropy_with_logits(logits, labels.float()), atol=1e-6)
+    assert torch.isfinite(binary_cross_entropy(torch.tensor([200.0, -200.0]), torch.tensor([0, 1])))  # 很離譜的 logits 也不會溢位
+
+
+GOOD = ["the little cat and the dog played in the sun", "a happy girl and her mom baked a warm cake", "the boy had a red ball and a kind friend"]
+BAD = ["click here to subscribe to our newsletter now", "terms of use privacy policy all rights reserved", "buy cheap pills online free shipping offer"]
+
+
+def toy_texts(seed: int, n: int) -> tuple[list[str], list[int]]:
+    rng = random.Random(seed)
+    texts, labels = [], []
+    for _ in range(n):
+        label = rng.randint(0, 1)
+        parts = [rng.choice([BAD, GOOD][label]) for _ in range(3)]
+        texts.append(" ".join(parts))
+        labels.append(label)
+    return texts, labels
+
+
+def test_train_quality_converges_on_separable_toy_data():
+    texts, labels = toy_texts(0, 200)
+    model, losses = train_quality(texts, labels, n_buckets=1 << 12, steps=60, batch_size=16, lr=0.1)
+    assert losses[0] > 0.6 > 0.1 > losses[-1]  # 一開始約 ln 2 = 0.693，結束時接近 0
+    test_texts, test_labels = toy_texts(1, 100)
+    scores = model.score(test_texts)
+    assert ((scores > 0).long() == torch.tensor(test_labels)).all()  # 沒看過的組合也分得開
+    unseen = model.score(["the girl and the dog had a warm cake", "subscribe now for free shipping and cheap pills"])
+    assert unseen[0] > 0 > unseen[1]
+
+
+def test_train_quality_is_deterministic_and_balances_classes():
+    texts, labels = toy_texts(0, 100)
+    a, losses_a = train_quality(texts, labels, n_buckets=256, steps=10, batch_size=8)
+    b, losses_b = train_quality(texts, labels, n_buckets=256, steps=10, batch_size=8)
+    assert torch.equal(a.weight, b.weight) and losses_a == losses_b
+    texts, labels = toy_texts(0, 400)  # 負例 90 篇、正例只留 5 篇
+    neg = [t for t, l in zip(texts, labels) if l == 0][:90]
+    pos = [t for t, l in zip(texts, labels) if l == 1][:5]
+    skewed, _ = train_quality(neg + pos, [0] * 90 + [1] * 5, n_buckets=256, steps=30, batch_size=8)
+    assert skewed.score([GOOD[0]]) > 0  # 每個 batch 一半一半，正例沒有被淹沒
 
 
 def test_line_hash_is_a_stable_64_bit_number():

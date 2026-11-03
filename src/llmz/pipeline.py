@@ -7,6 +7,8 @@ import gzip
 import json
 import math
 import re
+import string
+import zlib
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from hashlib import blake2b
@@ -16,6 +18,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
+import torch
+from torch import Tensor
+
+from llmz.functional import cross_entropy
+from llmz.optim import AdamW
 
 
 class Page(NamedTuple):
@@ -304,6 +311,129 @@ def mask_pii(text: str) -> tuple[str, dict[str, int]]:
         text = pattern.sub(replacer(kind, token), text)
     return text, counts
 # ANCHOR_END: mask_pii
+
+
+# ANCHOR: gopher_check
+GOPHER_STOP_WORDS = {"the", "be", "to", "of", "and", "that", "have", "with"}
+BULLETS = ("•", "●", "▪", "‣", "·", "-", "*")
+ELLIPSES = ("...", "…")
+
+
+def gopher_check(text: str) -> tuple[bool, list[str]]:
+    """Gopher 的品質規則（Rae 等人 2021，MassiveWeb）。回傳 (有沒有全部通過, 沒通過的規則名稱)。
+
+    「詞」就是用空白切出來的一段；「行」就是非空的一行。每條規則各自判斷，所以一份文件可以同時沒通過好幾條。
+
+    shortcut: 用空白切詞，中文、日文整段連在一起會被當成一個詞；這些規則是為英文寫的，其他語言要先過語言辨識，或換一組規則。
+    """
+    words = text.split()
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    n_words = max(len(words), 1)  # 空字串也要能算：比例一律除以至少 1
+    n_lines = max(len(lines), 1)
+    failed = []
+    if not 50 <= len(words) <= 100_000:
+        failed.append("word_count")
+    if not 3 <= sum(len(w) for w in words) / n_words <= 10:
+        failed.append("mean_word_length")
+    if text.count("#") / n_words > 0.1 or sum(text.count(e) for e in ELLIPSES) / n_words > 0.1:  # 兩種符號各自算
+        failed.append("symbol_ratio")
+    if sum(line.startswith(BULLETS) for line in lines) / n_lines > 0.9:
+        failed.append("bullet_lines")
+    if sum(line.endswith(ELLIPSES) for line in lines) / n_lines > 0.3:
+        failed.append("ellipsis_lines")
+    if sum(any(c.isalpha() for c in w) for w in words) / n_words < 0.8:
+        failed.append("alpha_words")
+    if len(GOPHER_STOP_WORDS & {w.strip(string.punctuation).lower() for w in words}) < 2:
+        failed.append("stop_words")
+    return not failed, failed
+# ANCHOR_END: gopher_check
+
+
+# ANCHOR: hash_ngrams
+WORD_RE = re.compile(r"\w+")
+
+
+def hash_ngrams(text: str, n_buckets: int, max_words: int = 256) -> list[int]:
+    """文字變成一串 bucket 編號：前 max_words 個詞（小寫）的每個詞、每一對相鄰的詞，各自雜湊到 [0, n_buckets)。
+
+    用 zlib.crc32，同一個字串永遠得到同一個數字；Python 內建的 hash() 每次啟動都不一樣，存下來的權重就對不上了。
+    """
+    words = WORD_RE.findall(text.lower())[:max_words]
+    grams = words + [f"{a} {b}" for a, b in zip(words, words[1:])]
+    return [zlib.crc32(g.encode()) % n_buckets for g in grams]
+# ANCHOR_END: hash_ngrams
+
+
+# ANCHOR: quality_classifier
+class QualityClassifier(torch.nn.Module):
+    """hashed n-gram 的 logistic regression：每個 bucket 一個權重，文件的分數是它所有 n-gram 的權重的平均，加上 bias。"""
+
+    def __init__(self, n_buckets: int = 1 << 16):
+        super().__init__()
+        self.n_buckets = n_buckets
+        self.weight = torch.nn.Parameter(torch.zeros(n_buckets))
+        self.bias = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, ids: Tensor, mask: Tensor) -> Tensor:
+        """ids、mask 形狀 (B, L)；mask 是 0 的位置是 padding，不算。回傳每篇的 logit，形狀 (B,)。"""
+        return (self.weight[ids] * mask).sum(-1) / mask.sum(-1).clamp(min=1) + self.bias  # 就是一維的 Embedding，再取平均
+
+    @torch.no_grad()
+    def score(self, texts: list[str]) -> Tensor:
+        """每篇文件的 logit：大於 0 表示模型認為「像標準語料」的機率超過一半；torch.sigmoid(score) 是機率。
+
+        shortcut: 一次把所有文件補齊成同樣長，記憶體跟文件數成正比；幾萬篇以上要分段呼叫。
+        """
+        return self(*pad_docs([hash_ngrams(t, self.n_buckets) for t in texts]))
+
+
+def pad_docs(docs: list[list[int]]) -> tuple[Tensor, Tensor]:
+    """每篇長度不一的 bucket 編號補齊成 (B, L)，並給一個標示真正內容的 mask。"""
+    ids = torch.zeros(len(docs), max(max(map(len, docs), default=0), 1), dtype=torch.long)
+    mask = torch.zeros(ids.shape)
+    for i, doc in enumerate(docs):
+        ids[i, : len(doc)] = torch.tensor(doc, dtype=torch.long)
+        mask[i, : len(doc)] = 1
+    return ids, mask
+
+
+def binary_cross_entropy(logits: Tensor, labels: Tensor) -> Tensor:
+    """logistic regression 的 loss。把 logit z 看成兩個類別的 logits [0, z]，就是第 1 章的 cross_entropy。"""
+    return cross_entropy(torch.stack([torch.zeros_like(logits), logits], dim=-1), labels)
+
+
+def train_quality(
+    texts: list[str],
+    labels: list[int],
+    n_buckets: int = 1 << 16,
+    steps: int = 300,
+    batch_size: int = 64,
+    lr: float = 0.1,
+    weight_decay: float = 0.01,
+    seed: int = 0,
+) -> tuple[QualityClassifier, list[float]]:
+    """labels：1 是「像標準語料」的正例，0 是一般網頁的負例。每個 batch 一半正例一半負例，因為兩邊的數量通常差很多。
+
+    回傳訓練好的分類器與每一步的 loss。
+    """
+    docs = [hash_ngrams(t, n_buckets) for t in texts]  # 只雜湊一次，訓練時一直重用
+    y = torch.tensor(labels)
+    pos, neg = (y == 1).nonzero().flatten(), (y == 0).nonzero().flatten()
+    gen = torch.Generator().manual_seed(seed)
+    model = QualityClassifier(n_buckets)
+    opt = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    losses = []
+    for _ in range(steps):
+        half = batch_size // 2
+        idx = torch.cat([pos[torch.randint(len(pos), (half,), generator=gen)], neg[torch.randint(len(neg), (half,), generator=gen)]])
+        ids, mask = pad_docs([docs[i] for i in idx.tolist()])
+        loss = binary_cross_entropy(model(ids, mask), y[idx])
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        losses.append(loss.item())
+    return model, losses
+# ANCHOR_END: quality_classifier
 
 
 # ANCHOR: line_hash

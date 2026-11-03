@@ -152,6 +152,8 @@
     - [語言辨識](chapter13/03_language_id.md)
     - [PII 遮蔽](chapter13/04_pii_masking.md)
     - [有害內容分類](chapter13/05_toxicity_classifier.md)
+    - [Gopher 品質規則](chapter13/06_gopher_rules.md)
+    - [品質分類器](chapter13/07_quality_classifier.md)
     - [exact dedup](chapter13/08_exact_dedup.md)
     - [MinHash + LSH](chapter13/09_minhash_lsh.md)
 - [後訓練：SFT 與偏好學習]()

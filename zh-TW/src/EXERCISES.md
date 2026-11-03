@@ -2909,6 +2909,65 @@ print(f"丟掉 {dropped} 句，留下：{kept}")
 print(f"逐句丟：剩 {len(kept)} 個字元；整頁丟：剩 0 個字元（原本 {len(doc)} 個）")
 ```
 
+### 第 6 集 Gopher 品質規則 — 狀態：可用
+
+**題目**
+
+Gopher 的七條規則只看文件的「形狀」。寫一個函式 `make_spam(n_words, seed)`：用一個自己編的詞表（約 30 個英文詞，其中至少要有兩個 Gopher 的停用詞），隨機抽詞組成一份 `n_words` 個詞的文件，每 10 個詞一行，讓 `gopher_check` 判定通過。接著把同一行約 16 個詞的文字重複 20 次，組成另一份文件，它也通過嗎？用規則的內容解釋這兩份文件為什麼能通過。
+
+**練習目標**：理解品質規則是「形狀」的篩子：它擋得掉選單、標籤堆疊、數字表，但判斷不了內容通不通順，也看不出重複。
+
+**批改重點**：兩份文件都通過（`(True, [])`）。隨機抽詞也會抽到 `the`、`and`，所以停用詞的條件過得了；詞數、平均詞長、符號比例、字母比例、行首行尾的條件，都只數「有多少」，不看詞排得通不通順。重複的行讓每一個比例都和原來的那一行一樣，沒有一條規則看得出「重複」。Gopher 的論文把重複另外放在「重複移除」這個階段，本章第 8、9 集的 exact dedup 與 MinHash 就是處理這件事。常見錯誤：詞表裡沒放停用詞，結果卡在 `stop_words`。
+
+**參考答案**
+
+```python
+import random
+
+from llmz.pipeline import gopher_check
+
+WORDS = (
+    "the of and garden river cheap window yellow market quickly paper silver engine planet "
+    "orange bridge hollow ladder pencil forest candle wander mirror basket thunder velvet harbor copper meadow lantern whisper"
+).split()
+
+
+def make_spam(n_words, seed):
+    rng = random.Random(seed)
+    words = [rng.choice(WORDS) for _ in range(n_words)]
+    return "\n".join(" ".join(words[i : i + 10]) for i in range(0, n_words, 10))  # 每 10 個詞一行
+
+
+print(gopher_check(make_spam(100, 0)))
+
+line = "buy cheap silver watches and the best bridge deals with free delivery to your door today"
+repeated = "\n".join([line] * 20)
+print(len(repeated.split()), gopher_check(repeated))
+```
+
+### 第 7 集 品質分類器 — 狀態：可用
+
+**題目**
+
+GPT-3 的論文用 `np.random.pareto(α) > 1 − document_score` 決定一份文件留不留，α = 9。假設 `document_score` 就是分類器給的機率 \\( s \\)。用 `np.random.default_rng(0).pareto(9, size=1_000_000)` 模擬，量出 \\( s = 0.99、0.9、0.5、0.1、0 \\) 的文件各自被留下的比例。numpy 的 `pareto` 是 Lomax 分布，\\( P(X > x) = (1 + x)^{-9} \\)，用它算出每個 \\( s \\) 的精確機率，和模擬比對。分數 0.9 的文件被留下的機率是多少？這和「分數大於 0.5 才留」的門檻有什麼不同？
+
+**練習目標**：把分類器的分數變成留下的機率，看到 soft sampling 與硬門檻的差別，以及 α 怎麼調整「多嚴格」。
+
+**批改重點**：模擬與精確值吻合，約 0.914、0.424、0.026、0.0031、0.0020（精確值是 \\( (2 - s)^{-9} \\)）。分數 0.9 的文件只有約 42% 被留下，分數 0 的文件也有 0.2% 的機會；硬門檻則是 0.5 以上全留、以下全丟。這樣的抽樣讓資料大部分來自高分文件，同時還收進一些不像正例的文件，不會整個縮到正例的樣子（論文說 α 取 9 是為了這個目的）。提示：留下的條件是 `x > 1 - s`，所以要算的是 \\( P(X > 1 - s) \\)。
+
+**參考答案**
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+x = rng.pareto(9, size=1_000_000)  # numpy 的 pareto 是 Lomax（Pareto II）分布：P(X > x) = (1 + x) ** -9
+for s in [0.99, 0.9, 0.5, 0.1, 0.0]:
+    simulated = (x > 1 - s).mean()
+    exact = (1 + (1 - s)) ** -9  # P(X > 1 - s)
+    print(f"分數 {s:.2f}：模擬留下 {simulated:.4f}，精確值 {exact:.4f}")
+```
+
 ### 第 8 集 exact dedup — 狀態：可用
 
 **題目**
