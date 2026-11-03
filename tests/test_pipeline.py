@@ -1,14 +1,34 @@
 import gzip
 import random
 
+import numpy as np
+import pytest
+import torch
+import torch.nn.functional as F
+
 from llmz.pipeline import (
     Page,
+    QualityClassifier,
+    binary_cross_entropy,
+    count_lines,
     decode_html,
+    dedup_lines,
+    drop_near_duplicates,
+    gopher_check,
+    hash_ngrams,
     html_to_text,
     iter_pages,
     iter_warc_records,
+    jaccard,
+    line_hash,
+    lsh_candidates,
+    lsh_probability,
+    minhash_signature,
     read_pages,
+    shingles,
     split_http_response,
+    train_quality,
+    verify_pairs,
     write_pages,
 )
 
@@ -123,3 +143,348 @@ def test_write_and_read_pages_roundtrip(tmp_path):
     assert write_pages(pages, path) == 2
     assert path.read_text(encoding="utf-8").count("\n") == 2  # 一頁一行，文字裡的換行被跳脫
     assert list(read_pages(path)) == pages
+
+
+# ---- 第 13 章第 6 集：Gopher 品質規則 ----
+
+
+def words_doc(words: list[str], per_line: int = 10) -> str:
+    return "\n".join(" ".join(words[i : i + per_line]) for i in range(0, len(words), per_line))
+
+
+def plain_words(n: int) -> list[str]:
+    """n 個「正常」的詞：含 the、and 兩個停用詞，平均詞長 3.875，全是字母。"""
+    base = ["the", "dog", "and", "that", "bird", "walked", "to", "market"]
+    return [base[i % len(base)] for i in range(n)]
+
+
+def failed_rules(words: list[str], per_line: int = 10) -> list[str]:
+    passed, failed = gopher_check(words_doc(words, per_line))
+    assert passed == (not failed)
+    return failed
+
+
+def test_gopher_passes_ordinary_text():
+    assert gopher_check(words_doc(plain_words(80))) == (True, [])
+
+
+def test_gopher_word_count_boundaries():
+    assert failed_rules(plain_words(49)) == ["word_count"]
+    assert failed_rules(plain_words(50)) == []
+    assert failed_rules(plain_words(100_000), per_line=100) == []
+    assert failed_rules(plain_words(100_001), per_line=100) == ["word_count"]
+
+
+def test_gopher_mean_word_length_boundaries():
+    def mean_len(total_chars: int) -> list[str]:  # 50 個詞：the、and 加 47 個 10 字元的詞，最後一個詞補到總字元數
+        return ["the", "and"] + ["a" * 10] * 47 + ["a" * (total_chars - 6 - 470)]
+
+    assert failed_rules(mean_len(500)) == []  # 平均剛好 10
+    assert failed_rules(mean_len(501)) == ["mean_word_length"]
+    assert failed_rules(["the", "and"] + ["cat"] * 48) == []  # 平均剛好 3
+    assert failed_rules(["the", "and"] + ["cat"] * 47 + ["at"]) == ["mean_word_length"]
+
+
+def test_gopher_symbol_ratio_boundaries():
+    for symbol, name in [("#", "hash"), ("...", "ellipsis"), ("…", "ellipsis")]:
+        words = plain_words(60)
+        for i in range(6):  # 6 / 60 = 0.1：不算「大於」
+            words[i] = symbol + words[i]
+        assert failed_rules(words) == [], name
+        words[6] = symbol + words[6]  # 7 / 60 > 0.1
+        assert failed_rules(words) == ["symbol_ratio"], name
+
+
+def test_gopher_symbol_ratio_hash_and_ellipsis_are_counted_separately():
+    words = plain_words(60)
+    for i in range(6):
+        words[i] = "#" + words[i]
+        words[i + 6] = words[i + 6] + "…"  # 各 6 個：合起來 0.2，但各自都沒超過 0.1
+    assert failed_rules(words, per_line=1000) == []  # 全部放同一行，不觸發逐行規則
+
+
+def test_gopher_bullet_lines_boundaries():
+    lines = ["the dog and that bird walked to market again today"] * 10  # 一行 10 個詞，共 100 個詞
+    assert gopher_check("\n".join(["• " + l for l in lines[:9]] + lines[9:])) == (True, [])  # 9/10 = 0.9：不算「超過」
+    assert gopher_check("\n".join("• " + l for l in lines)) == (False, ["bullet_lines"])
+    assert gopher_check("\n".join("- " + l for l in lines)) == (False, ["bullet_lines"])
+
+
+def test_gopher_ellipsis_lines_boundaries():
+    lines = ["the dog and that bird walked to market again today"] * 10
+    assert gopher_check("\n".join([l + "..." for l in lines[:3]] + lines[3:])) == (True, [])  # 3/10 = 0.3：不算「超過」
+    assert gopher_check("\n".join([l + "…  " for l in lines[:4]] + lines[4:])) == (False, ["ellipsis_lines"])  # 行尾空白不影響
+
+
+def test_gopher_alphabetic_word_boundaries():
+    words = plain_words(50)
+    for i in range(10):  # 40/50 = 0.8 的詞有字母：剛好達標
+        words[i] = "1234"
+    assert failed_rules(words) == []
+    words[10] = "1234"  # 39/50
+    assert failed_rules(words) == ["alpha_words"]
+
+
+def test_gopher_stop_word_boundaries():
+    words = ["cat"] * 60
+    assert failed_rules(words) == ["stop_words"]
+    assert failed_rules(["the"] * 30 + words) == ["stop_words"]  # 同一個停用詞出現再多次也只算一個
+    assert failed_rules(["The,"] + ["and."] + words) == []  # 不分大小寫，標點不算
+    assert failed_rules(["the"] + ["cat"] * 59 + ["With"]) == []
+
+
+def test_gopher_reports_every_failed_rule():
+    passed, failed = gopher_check("")  # 空字串不能除以 0
+    assert not passed
+    assert failed == ["word_count", "mean_word_length", "alpha_words", "stop_words"]
+    assert gopher_check("12 34 56")[1] == ["word_count", "mean_word_length", "alpha_words", "stop_words"]
+
+
+# ---- 第 13 章第 7 集：品質分類器 ----
+
+
+def test_hash_ngrams_is_stable_across_processes():
+    assert hash_ngrams("hello", 10**6) == [60870]  # zlib.crc32(b"hello") = 907060870（公開的校驗值）；Python 內建的 hash() 每次執行都不一樣，不能用
+
+
+def test_hash_ngrams_makes_unigrams_then_bigrams():
+    ids = hash_ngrams("a b c", 1 << 20)
+    assert ids[:3] == [hash_ngrams(w, 1 << 20)[0] for w in "abc"]
+    assert ids[3:] == [hash_ngrams("a b", 1 << 20)[-1], hash_ngrams("b c", 1 << 20)[-1]]
+    assert len(ids) == 5
+    assert hash_ngrams("a b", 1 << 20)[-1] != hash_ngrams("b a", 1 << 20)[-1]  # 順序不同，bigram 就不同
+    assert all(0 <= i < 7 for i in hash_ngrams("some text with several words", 7))  # 一定落在 [0, n_buckets)
+
+
+def test_hash_ngrams_normalizes_and_truncates():
+    assert hash_ngrams("The  CAT, sat!", 1000) == hash_ngrams("the cat sat", 1000)  # 小寫、標點與空白不算
+    assert hash_ngrams("", 1000) == [] and hash_ngrams("?!", 1000) == []
+    assert len(hash_ngrams("w " * 1000, 1000)) == 256 + 255  # 只看前 256 個詞
+    assert len(hash_ngrams("w " * 1000, 1000, max_words=10)) == 10 + 9
+
+
+def test_quality_classifier_averages_the_weights_of_a_documents_ngrams():
+    model = QualityClassifier(8)
+    with torch.no_grad():
+        model.weight[3], model.weight[5], model.bias[...] = 2.0, -1.0, 0.5
+    ids = torch.tensor([[3, 5, 0], [5, 5, 5]])
+    mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])  # 第 1 篇最後一格是 padding，不能算進去
+    assert torch.allclose(model(ids, mask), torch.tensor([(2 - 1) / 2 + 0.5, -1 + 0.5]))
+
+
+def test_binary_cross_entropy_matches_torch():
+    torch.manual_seed(0)
+    logits, labels = torch.randn(32) * 3, torch.randint(0, 2, (32,))
+    assert torch.allclose(binary_cross_entropy(logits, labels), F.binary_cross_entropy_with_logits(logits, labels.float()), atol=1e-6)
+    assert torch.isfinite(binary_cross_entropy(torch.tensor([200.0, -200.0]), torch.tensor([0, 1])))  # 很離譜的 logits 也不會溢位
+
+
+GOOD = ["the little cat and the dog played in the sun", "a happy girl and her mom baked a warm cake", "the boy had a red ball and a kind friend"]
+BAD = ["click here to subscribe to our newsletter now", "terms of use privacy policy all rights reserved", "buy cheap pills online free shipping offer"]
+
+
+def toy_texts(seed: int, n: int) -> tuple[list[str], list[int]]:
+    rng = random.Random(seed)
+    texts, labels = [], []
+    for _ in range(n):
+        label = rng.randint(0, 1)
+        parts = [rng.choice([BAD, GOOD][label]) for _ in range(3)]
+        texts.append(" ".join(parts))
+        labels.append(label)
+    return texts, labels
+
+
+def test_train_quality_converges_on_separable_toy_data():
+    texts, labels = toy_texts(0, 200)
+    model, losses = train_quality(texts, labels, n_buckets=1 << 12, steps=60, batch_size=16, lr=0.1)
+    assert losses[0] > 0.6 > 0.1 > losses[-1]  # 一開始約 ln 2 = 0.693，結束時接近 0
+    test_texts, test_labels = toy_texts(1, 100)
+    scores = model.score(test_texts)
+    assert ((scores > 0).long() == torch.tensor(test_labels)).all()  # 沒看過的組合也分得開
+    unseen = model.score(["the girl and the dog had a warm cake", "subscribe now for free shipping and cheap pills"])
+    assert unseen[0] > 0 > unseen[1]
+
+
+def test_train_quality_is_deterministic_and_balances_classes():
+    texts, labels = toy_texts(0, 100)
+    a, losses_a = train_quality(texts, labels, n_buckets=256, steps=10, batch_size=8)
+    b, losses_b = train_quality(texts, labels, n_buckets=256, steps=10, batch_size=8)
+    assert torch.equal(a.weight, b.weight) and losses_a == losses_b
+    texts, labels = toy_texts(0, 400)  # 負例 90 篇、正例只留 5 篇
+    neg = [t for t, l in zip(texts, labels) if l == 0][:90]
+    pos = [t for t, l in zip(texts, labels) if l == 1][:5]
+    skewed, _ = train_quality(neg + pos, [0] * 90 + [1] * 5, n_buckets=256, steps=30, batch_size=8)
+    assert skewed.score([GOOD[0]]) > 0  # 每個 batch 一半一半，正例沒有被淹沒
+
+
+def test_line_hash_is_a_stable_64_bit_number():
+    assert line_hash("Contact us") == line_hash("Contact us")
+    assert line_hash("Contact us") != line_hash("Contact us ")  # exact：差一個空格就是不同的行
+    assert 0 <= line_hash("") < 2**64 and 0 <= line_hash("你好") < 2**64
+
+
+def test_count_lines_counts_pages_not_occurrences():
+    pages = [Page("a", "Home\nBody a\nHome"), Page("b", "Home\nBody b"), Page("c", "Body c")]
+    counts = count_lines(pages)
+    assert counts[line_hash("Home")] == 2  # 同一頁重複兩次只算一頁
+    assert counts[line_hash("Body a")] == 1 and counts[line_hash("nope")] == 0
+
+
+def test_dedup_lines_removes_every_copy_of_lines_on_many_pages():
+    menu, footer = "Home | Shop | About", "Copyright 2026"
+    pages = [Page(f"http://x/{i}", f"{menu}\nbody {i}\nmore {i}\n{footer}") for i in range(4)]
+    kept = dedup_lines(pages, min_pages=3)
+    assert [p.text for p in kept] == [f"body {i}\nmore {i}" for i in range(4)]
+    assert [p.url for p in kept] == [p.url for p in pages]  # 網址與順序不變
+    assert dedup_lines(pages, min_pages=5) == pages  # 門檻比頁數高就什麼都不動
+    assert dedup_lines(pages[:1], min_pages=1) == []  # 一行都不剩的頁面整頁丟掉
+
+
+def test_dedup_lines_keeps_lines_repeated_inside_one_page():
+    pages = [Page("a", "x\nx\nx\ny"), Page("b", "z")]
+    assert dedup_lines(pages, min_pages=2) == pages  # 重複只發生在同一頁，不算「很多頁都有」
+    assert dedup_lines([Page("a", "")], min_pages=2) == []  # 空頁面不留
+
+
+def test_shingles_are_unique_hashes_of_word_ngrams():
+    got = shingles("The  quick brown\nfox JUMPS over the lazy dog", n=5)
+    assert got.dtype == np.uint64 and got.size == 5  # 9 個字 → 5 個長度為 5 的視窗
+    assert np.array_equal(got, shingles("the quick brown fox jumps over the lazy dog", n=5))  # 大小寫與空白不影響
+    assert shingles("a b c d e a b c d e", n=5).size == 5  # 6 個視窗，第 1 個與第 6 個相同，集合只留 5 個
+    assert shingles("only three words", n=5).size == 1  # 比 n 短的文件，整段當一個 shingle
+    assert shingles("", n=5).size == 0 and shingles(" \n ", n=5).size == 0
+
+
+def test_one_changed_word_destroys_n_shingles():
+    words = [f"w{i}" for i in range(30)]
+    edited = words[:15] + ["changed"] + words[16:]
+    a, b = shingles(" ".join(words), n=5), shingles(" ".join(edited), n=5)
+    assert a.size == b.size == 26 and np.intersect1d(a, b).size == 26 - 5  # 含第 15 個字的 5 個視窗都變了
+    assert jaccard(a, b) == 21 / 31
+
+
+def test_jaccard_exact():
+    a, b = np.array([1, 2, 3, 4], dtype=np.uint64), np.array([3, 4, 5], dtype=np.uint64)
+    assert jaccard(a, b) == 2 / 5 and jaccard(a, a) == 1.0 and jaccard(a, np.array([9], dtype=np.uint64)) == 0.0
+    assert jaccard(np.array([], dtype=np.uint64), np.array([], dtype=np.uint64)) == 0.0  # 空集合不是任何東西的重複
+
+
+def random_pair(rng, shared: int, only: int):
+    """兩個集合各有 only 個自己獨有的元素、共有 shared 個；Jaccard = shared / (shared + 2 * only)。"""
+    ids = rng.integers(0, 2**64, shared + 2 * only, dtype=np.uint64)
+    return ids[: shared + only], np.concatenate([ids[:shared], ids[shared + only :]])
+
+
+def test_minhash_signature_estimates_jaccard():
+    rng = np.random.default_rng(0)
+    errors = []
+    for shared, only in [(10, 90), (100, 100), (300, 33), (190, 5), (60, 270)]:  # J ≈ 0.05、0.33、0.82、0.95、0.10
+        a, b = random_pair(rng, shared, only)
+        exact = jaccard(a, b)
+        for seed in range(10):
+            sa, sb = minhash_signature(a, 256, seed), minhash_signature(b, 256, seed)
+            errors.append(float((sa == sb).mean()) - exact)
+    errors = np.array(errors)  # 估計的標準差是 sqrt(J(1-J)/256)，最大約 0.031
+    assert abs(errors.mean()) < 0.01  # 沒有系統性偏高或偏低
+    assert np.abs(errors).max() < 0.1  # 約 3.2 倍標準差
+
+
+def test_minhash_signature_properties():
+    rng = np.random.default_rng(1)
+    a, b = random_pair(rng, 50, 100)
+    sig = minhash_signature(a, 64, 0)
+    assert sig.shape == (64,) and sig.dtype == np.uint64
+    assert np.array_equal(sig, minhash_signature(a[::-1].copy(), 64, 0))  # 集合沒有順序
+    assert np.array_equal(sig, minhash_signature(a, 64, 0))  # 同一個 seed 同一組隨機排列
+    assert not np.array_equal(sig, minhash_signature(a, 64, 1))
+    assert (minhash_signature(b, 64, 0) == sig).mean() < 0.2  # J = 1/5 左右
+    assert minhash_signature(a).shape == (128,)  # 預設 128 個排列
+
+
+def test_minhash_signature_of_empty_set_does_not_crash():
+    sig = minhash_signature(shingles(""), 8)
+    assert sig.shape == (8,) and (sig == np.iinfo(np.uint64).max).all()
+
+
+def test_lsh_probability_is_the_s_curve():
+    assert lsh_probability(0.5, bands=1, rows=1) == 0.5
+    assert lsh_probability(0.5, bands=2, rows=3) == pytest.approx(1 - (1 - 0.5**3) ** 2)
+    assert lsh_probability(0.0, 16, 8) == 0.0 and lsh_probability(1.0, 16, 8) == 1.0
+    curve = [lsh_probability(s / 10, 16, 8) for s in range(11)]
+    assert curve == sorted(curve)  # 越相似，越容易成為候選
+    assert lsh_probability(0.9, 16, 8) > 0.99 and lsh_probability(0.3, 16, 8) < 0.01
+
+
+def test_lsh_candidates_bucket_by_band():
+    sigs = np.array([[1, 2, 3, 4], [1, 2, 9, 9], [7, 7, 3, 4], [1, 5, 5, 5]], dtype=np.uint64)
+    assert lsh_candidates(sigs, bands=2, rows=2) == {(0, 1), (0, 2)}  # 0 與 1 的第 1 段相同；0 與 2 的第 2 段相同
+    assert lsh_candidates(sigs, bands=4, rows=1) == {(0, 1), (0, 2), (0, 3), (1, 3)}  # 每段只要 1 格相同就算，寬鬆得多
+    assert lsh_candidates(sigs, bands=1, rows=4) == set()  # 整條簽章都要一樣
+    with pytest.raises(ValueError):
+        lsh_candidates(sigs, bands=3, rows=2)  # bands * rows 要等於簽章長度
+
+
+def planted_near_duplicates(rng, n_other: int, n_pairs: int, n_edits: int, size: int = 300):
+    """n_other 份互不相干的集合，加上 n_pairs 對「複本改掉 n_edits 個元素」的集合；複本排在最後。"""
+    others = [rng.integers(0, 2**64, size, dtype=np.uint64) for _ in range(n_other)]
+    bases = [rng.integers(0, 2**64, size, dtype=np.uint64) for _ in range(n_pairs)]
+    copies = []
+    for base in bases:
+        copy = base.copy()
+        copy[rng.choice(size, n_edits, replace=False)] = rng.integers(0, 2**64, n_edits, dtype=np.uint64)
+        copies.append(copy)
+    return others + bases + copies, [(n_other + i, n_other + n_pairs + i) for i in range(n_pairs)]
+
+
+def test_lsh_finds_planted_near_duplicates_and_little_else():
+    rng = np.random.default_rng(0)
+    sets, planted = planted_near_duplicates(rng, n_other=200, n_pairs=30, n_edits=9)  # J = 291/309 = 0.94
+    sigs = np.stack([minhash_signature(s, 128) for s in sets])
+    assert lsh_candidates(sigs, bands=16, rows=8) == set(planted)  # 全部找回，而且沒有多的
+
+    sets, planted = planted_near_duplicates(rng, n_other=0, n_pairs=40, n_edits=100)  # J = 200/400 = 0.5
+    sigs = np.stack([minhash_signature(s, 128) for s in sets])
+    found = lsh_candidates(sigs, bands=16, rows=8) & set(planted)
+    assert len(found) < 0.3 * 40  # 理論上只有 6% 會成為候選：不夠相似的對本來就不該被找出來
+
+
+def test_verify_pairs_checks_exact_jaccard():
+    rng = np.random.default_rng(1)
+    sets, planted = planted_near_duplicates(rng, n_other=2, n_pairs=2, n_edits=300 // 10)
+    sets[-1] = sets[-1].copy()  # 第 2 對再多改 60 個元素，Jaccard 掉到約 0.67
+    sets[-1][:60] = rng.integers(0, 2**64, 60, dtype=np.uint64)
+    candidates = {(2, 4), (3, 5), (0, 1)}  # 兩對複本，外加一對不相干的假候選
+    got = verify_pairs(sorted(candidates), sets, threshold=0.8)
+    assert [(i, j) for i, j, _ in got] == [(2, 4)]
+    assert got[0][2] == pytest.approx(jaccard(sets[2], sets[4])) and got[0][2] > 0.8
+
+
+def words_page(rng, n_words: int, url: str) -> Page:
+    vocab = [f"word{i}" for i in range(2000)]
+    return Page(url, " ".join(rng.choice(vocab, n_words)))
+
+
+def test_drop_near_duplicates_keeps_the_first_of_each_group():
+    rng = np.random.default_rng(2)
+    base = words_page(rng, 200, "http://x/base")
+    edited = base.text.split()
+    edited[50], edited[120] = "edited", "changed"  # 2 個字 → 10 個 shingle 不同，Jaccard 約 0.9
+    near = Page("http://x/near", " ".join(edited))
+    other = words_page(rng, 200, "http://x/other")
+    pages = [base, other, near, Page("http://x/copy", base.text), words_page(rng, 150, "http://x/last")]
+    kept = drop_near_duplicates(pages, threshold=0.8)
+    assert [p.url for p in kept] == ["http://x/base", "http://x/other", "http://x/last"]
+    assert drop_near_duplicates([]) == []
+
+
+def test_drop_near_duplicates_threshold_and_chains():
+    rng = np.random.default_rng(3)
+    a = words_page(rng, 400, "a")
+    b_words = a.text.split()
+    b_words[100] = "x1"  # a 與 b：1 個字不同
+    b = Page("b", " ".join(b_words))
+    c_words = list(b_words)
+    c_words[300] = "x2"  # b 與 c：再 1 個字不同；a 與 c 兩個字不同
+    c = Page("c", " ".join(c_words))
+    assert [p.url for p in drop_near_duplicates([a, b, c], threshold=0.9)] == ["a"]  # 三份兩兩 Jaccard 都 > 0.9
+    assert [p.url for p in drop_near_duplicates([a, b, c], threshold=0.97)] == ["a", "c"]  # b 與 a 太像被丟掉；c 與 a 的 Jaccard 低於門檻，留下

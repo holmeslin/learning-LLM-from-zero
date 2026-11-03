@@ -2762,6 +2762,288 @@ for tag in ["select", "nav", "footer", "aside"]:
     print(f"{tag}：多丟 {before - after:,} 個字元")
 ```
 
+### 第 3 集 語言辨識 — 狀態：可用
+
+**題目**
+
+第 3 集的 `train_langid` 預設 `n=3`、`alpha=0.1`，是隨手選的。把 `n` 換成 1、2、3、4，`alpha` 換成 0.01、0.1、1.0，共 12 組，各自量三個數字：60 句測試句的正確數；在 318 頁「一半以上是韓文、漢字或西里爾字母」的網頁上，整頁分類與 `predict_lines` 逐行投票各對幾頁（正解用書寫系統判斷，做法見第 3 集）。`n=1`（只看單一字元）夠用嗎？哪一個設定你會選？
+
+**練習目標**：用 `NGramClassifier.train(samples, n, alpha)` 做超參數的比較，並看到「測試集全對」與「真實網頁上的表現」會給出不同的結論。
+
+**批改重點**：測試句在 `n >= 3` 時全對（60/60），`n = 1` 是 59/60（`alpha = 1.0` 時 56/60）；可是在 318 頁網頁上，整頁分類反而是 `n = 1` 最好（`alpha = 0.01` 時 280 頁，`n = 3`、`alpha = 0.1` 是 245 頁），`alpha` 愈大愈差；逐行投票幾乎不受影響（303 到 311 頁）。可能的原因：網頁上的中文字多半在訓練資料裡只出現一兩次，`n` 愈大，能對上的片段愈少；整頁分類又很容易被認得的英文片段拉走；逐行投票把後面這個問題擋掉了。注意這只是在這一份資料、這個代理的正解上量到的，不要說成「`n = 1` 永遠比較好」；選哪一組沒有標準答案，要能說明依據。提示：`alpha` 愈小，「這個語言看過、另一個語言沒看過」的片段，證據愈強。常見錯誤：只看測試句的結果就選 `n = 3`。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import NGramClassifier, load_langid_samples, read_pages
+
+SCRIPTS = {"han": (0x4E00, 0x9FFF), "kana": (0x3040, 0x30FF), "hangul": (0xAC00, 0xD7AF), "cyrillic": (0x0400, 0x04FF)}
+
+
+def expected_language(text):
+    letters = [ord(ch) for ch in text if ch.isalpha()]
+    s = {name: sum(lo <= c <= hi for c in letters) / max(len(letters), 1) for name, (lo, hi) in SCRIPTS.items()}
+    if s["hangul"] >= 0.5:
+        return "ko"
+    if s["han"] + s["kana"] >= 0.5:
+        return "ja" if s["kana"] >= 0.05 else "zh"
+    if s["cyrillic"] >= 0.5:
+        return "ru"
+
+
+train, test = load_langid_samples("train"), load_langid_samples("test")
+pages = [(p.text, expected_language(p.text)) for p in read_pages("data/cc/pages.jsonl")]
+pages = [(text, want) for text, want in pages if want]
+
+print(" n  alpha  測試句  整頁  逐行")
+for n in [1, 2, 3, 4]:
+    for alpha in [0.01, 0.1, 1.0]:
+        model = NGramClassifier.train(train, n, alpha)
+        sentences = sum(model.predict(t)[0] == lang for lang, ts in test.items() for t in ts)
+        whole = sum(model.predict(text)[0] == want for text, want in pages)
+        lines = sum(model.predict_lines(text) == want for text, want in pages)
+        print(f"{n:2d}  {alpha:5}  {sentences:3d}/60  {whole:3d}  {lines:3d}  (共 {len(pages)} 頁)")
+```
+
+M4 Max 上的輸出（每次相同）：
+
+```text
+ n  alpha  測試句  整頁  逐行
+ 1   0.01   59/60  280  311  (共 318 頁)
+ 1    0.1   59/60  272  310  (共 318 頁)
+ 1    1.0   56/60  245  311  (共 318 頁)
+ 2   0.01   59/60  257  309  (共 318 頁)
+ 2    0.1   59/60  250  310  (共 318 頁)
+ 2    1.0   59/60  223  306  (共 318 頁)
+ 3   0.01   60/60  248  309  (共 318 頁)
+ 3    0.1   60/60  245  309  (共 318 頁)
+ 3    1.0   60/60  213  304  (共 318 頁)
+ 4   0.01   60/60  246  308  (共 318 頁)
+ 4    0.1   60/60  240  309  (共 318 頁)
+ 4    1.0   60/60  207  303  (共 318 頁)
+```
+
+### 第 4 集 PII 遮蔽 — 狀態：可用
+
+**題目**
+
+Dolma 的規則是：一頁遮蔽了 6 個以上的 PII，整頁丟掉。在 817 頁網頁上，用 `mask_pii` 的次數，量門檻訂在「1、3、6、10 個以上」時，各丟幾頁、少了百分之幾的字元、帶走百分之幾的 PII。為什麼丟掉的頁數很少，字元卻少得比頁數的比例多很多？
+
+**練習目標**：把「遮蔽」與「整頁丟掉」兩種處理接在一起，並量一個門檻的代價。
+
+**批改重點**：1、3、6、10 個以上分別丟 190、51、14、4 頁（23.3%、6.2%、1.7%、0.5%），少 35.4%、17.2%、11.4%、8.4% 的字元，帶走 100%、68%、45%、34% 的 PII。丟掉的頁面比較長：門檻 6 個時，丟掉 1.7% 的頁面卻少了 11.4% 的字元，這 14 頁平均是全部頁面平均長度的約 6.7 倍（多半是長長的目錄或名單），所以字元的損失比例大於頁數的比例。提示：`mask_pii(text)` 回傳的字典，`sum(counts.values())` 是這一頁遮蔽了幾個。常見錯誤：用遮蔽後的文字長度算字元，結果和原文不一樣（標記比原文短）。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import mask_pii, read_pages
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+results = [mask_pii(p.text) for p in pages]
+n_pii = [sum(counts.values()) for _, counts in results]
+
+for limit in [1, 3, 6, 10]:
+    dropped = [i for i, n in enumerate(n_pii) if n >= limit]
+    chars_lost = sum(len(pages[i].text) for i in dropped)
+    pii_gone = sum(n_pii[i] for i in dropped)
+    print(
+        f"{limit:2d} 個以上整頁丟：丟 {len(dropped):3d} 頁（{len(dropped) / len(pages):.1%}），"
+        f"少 {chars_lost / sum(len(p.text) for p in pages):.1%} 的字元，帶走 {pii_gone / sum(n_pii):.0%} 的 PII"
+    )
+```
+
+### 第 5 集 有害內容分類 — 狀態：可用
+
+**題目**
+
+第 5 集的分類器是整句分類。Dolma 是逐句：把文件切成句子，只丟掉分數高於門檻的句子。寫 `drop_flagged(text, threshold)`，回傳 `(留下的文字, 丟掉幾句)`。用第 5 集的玩具分類器（可以縮小訓練資料，各 6 句）與一份 4 句的文件測試：三句正常、一句罵人（用 `blorf`）夾在中間。逐句丟與整頁丟，各剩幾個字元？
+
+**練習目標**：把句子層級的處理接在分類器後面，並比較兩種粒度保留多少資料。
+
+**批改重點**：文件的 4 句分數是 `-0.6`、`-1.0`、`1.32`、`-1.24`，門檻 `0.1` 丟掉第三句，留下 95 個字元；整頁丟則 0 個（文件原本 135 個）。用 `re.split(r"(?<=[.!?])\s+", text)` 切句；用 `" ".join` 接回去。提示：分數是 `score(text) = (ll["flagged"] - ll["ok"]) / 片段數`，不用 `predict` 的機率。常見錯誤：句子切在縮寫的句點（`Mr.`）而切錯，這個簡單的切法的限制，要先說出來。
+
+**參考答案**
+
+```python
+import re
+
+from llmz.pipeline import NGramClassifier, char_ngrams
+
+FLAGGED = [
+    "you are such a zorp, nobody wants you on this team",
+    "what a blorf, you lost us the game again",
+    "shut up you big snurgle and go away",
+    "stupid zorp, you ruin every match",
+    "go away you filthy snurgle, you are the worst",
+    "what a pathetic blorf you are",
+]
+OK = [
+    "good game everyone, that was a close match",
+    "nice shot, you saved us in the last round",
+    "can someone help me with the second level",
+    "thanks for the invite, this team is fun",
+    "the new map looks great, i love the colors",
+    "well played, see you all tomorrow",
+]
+model = NGramClassifier.train({"flagged": FLAGGED, "ok": OK})
+
+
+def score(text):
+    ll = model.log_likelihoods(text)
+    return (ll["flagged"] - ll["ok"]) / sum(char_ngrams(text, model.n).values())
+
+
+def drop_flagged(text, threshold=0.1):
+    """逐句分類：丟掉分數高於門檻的句子，回傳 (留下的文字, 丟掉幾句)。"""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if score(s) <= threshold]
+    return " ".join(kept), len(sentences) - len(kept)
+
+
+doc = (
+    "Good game everyone. Thanks for the invite, this team is fun. "
+    "What a pathetic blorf you are, go away. Well played, see you all tomorrow."
+)
+kept, dropped = drop_flagged(doc)
+print(f"丟掉 {dropped} 句，留下：{kept}")
+print(f"逐句丟：剩 {len(kept)} 個字元；整頁丟：剩 0 個字元（原本 {len(doc)} 個）")
+```
+
+### 第 6 集 Gopher 品質規則 — 狀態：可用
+
+**題目**
+
+Gopher 的七條規則只看文件的「形狀」。寫一個函式 `make_spam(n_words, seed)`：用一個自己編的詞表（約 30 個英文詞，其中至少要有兩個 Gopher 的停用詞），隨機抽詞組成一份 `n_words` 個詞的文件，每 10 個詞一行，讓 `gopher_check` 判定通過。接著把同一行約 16 個詞的文字重複 20 次，組成另一份文件，它也通過嗎？用規則的內容解釋這兩份文件為什麼能通過。
+
+**練習目標**：理解品質規則是「形狀」的篩子：它擋得掉選單、標籤堆疊、數字表，但判斷不了內容通不通順，也看不出重複。
+
+**批改重點**：兩份文件都通過（`(True, [])`）。隨機抽詞也會抽到 `the`、`and`，所以停用詞的條件過得了；詞數、平均詞長、符號比例、字母比例、行首行尾的條件，都只數「有多少」，不看詞排得通不通順。重複的行讓每一個比例都和原來的那一行一樣，沒有一條規則看得出「重複」。Gopher 的論文把重複另外放在「重複移除」這個階段，本章第 8、9 集的 exact dedup 與 MinHash 就是處理這件事。常見錯誤：詞表裡沒放停用詞，結果卡在 `stop_words`。
+
+**參考答案**
+
+```python
+import random
+
+from llmz.pipeline import gopher_check
+
+WORDS = (
+    "the of and garden river cheap window yellow market quickly paper silver engine planet "
+    "orange bridge hollow ladder pencil forest candle wander mirror basket thunder velvet harbor copper meadow lantern whisper"
+).split()
+
+
+def make_spam(n_words, seed):
+    rng = random.Random(seed)
+    words = [rng.choice(WORDS) for _ in range(n_words)]
+    return "\n".join(" ".join(words[i : i + 10]) for i in range(0, n_words, 10))  # 每 10 個詞一行
+
+
+print(gopher_check(make_spam(100, 0)))
+
+line = "buy cheap silver watches and the best bridge deals with free delivery to your door today"
+repeated = "\n".join([line] * 20)
+print(len(repeated.split()), gopher_check(repeated))
+```
+
+### 第 7 集 品質分類器 — 狀態：可用
+
+**題目**
+
+GPT-3 的論文用 `np.random.pareto(α) > 1 − document_score` 決定一份文件留不留，α = 9。假設 `document_score` 就是分類器給的機率 \\( s \\)。用 `np.random.default_rng(0).pareto(9, size=1_000_000)` 模擬，量出 \\( s = 0.99、0.9、0.5、0.1、0 \\) 的文件各自被留下的比例。numpy 的 `pareto` 是 Lomax 分布，\\( P(X > x) = (1 + x)^{-9} \\)，用它算出每個 \\( s \\) 的精確機率，和模擬比對。分數 0.9 的文件被留下的機率是多少？這和「分數大於 0.5 才留」的門檻有什麼不同？
+
+**練習目標**：把分類器的分數變成留下的機率，看到 soft sampling 與硬門檻的差別，以及 α 怎麼調整「多嚴格」。
+
+**批改重點**：模擬與精確值吻合，約 0.914、0.424、0.026、0.0031、0.0020（精確值是 \\( (2 - s)^{-9} \\)）。分數 0.9 的文件只有約 42% 被留下，分數 0 的文件也有 0.2% 的機會；硬門檻則是 0.5 以上全留、以下全丟。這樣的抽樣讓資料大部分來自高分文件，同時還收進一些不像正例的文件，不會整個縮到正例的樣子（論文說 α 取 9 是為了這個目的）。提示：留下的條件是 `x > 1 - s`，所以要算的是 \\( P(X > 1 - s) \\)。
+
+**參考答案**
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+x = rng.pareto(9, size=1_000_000)  # numpy 的 pareto 是 Lomax（Pareto II）分布：P(X > x) = (1 + x) ** -9
+for s in [0.99, 0.9, 0.5, 0.1, 0.0]:
+    simulated = (x > 1 - s).mean()
+    exact = (1 + (1 - s)) ** -9  # P(X > 1 - s)
+    print(f"分數 {s:.2f}：模擬留下 {simulated:.4f}，精確值 {exact:.4f}")
+```
+
+### 第 8 集 exact dedup — 狀態：可用
+
+**題目**
+
+`dedup_lines` 把出現在至少 `min_pages` 頁的行，每一份都拿掉。改成「每一行只保留在它第一次出現的那一頁，後面的頁面都拿掉」（同一頁自己重複的行不動），寫出 `dedup_lines_keep_first(pages)`。先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/pages.jsonl`，比較它與 `dedup_lines(pages, 2)` 拿掉的行數、字元數與整頁丟掉的頁數，並看那 6 份一模一樣的頁面各留下幾份。
+
+**練習目標**：「出現在很多頁就整個拿掉」與「重複的只留一份」是兩種不同的去重：前者適合每頁共用的框架，後者保留內容。
+
+**批改重點**：`dedup_lines(pages, 2)` 拿掉 23,040 行（21.3%）、216,680 個字元（4.9%），整頁丟掉 10 頁，6 份一模一樣的頁面一份都不剩；`dedup_lines_keep_first` 拿掉 16,189 行（15.0%）、133,798 個字元（3.0%），整頁丟掉 8 頁，6 份一模一樣的頁面留下 1 份（第一份）。提示：邊掃邊記 `seen`（出現過的行的集合）。常見錯誤：每讀一行就更新 `seen`，結果同一頁自己重複的行被當成「前面出現過」而拿掉；要處理完這一頁才把這一頁的行加進 `seen`。
+
+**參考答案**
+
+```python,norun
+from collections import Counter
+
+from llmz.pipeline import Page, dedup_lines, read_pages
+
+
+def dedup_lines_keep_first(pages):
+    """每一行只留在它第一次出現的那一頁；同一頁自己重複的行不動。"""
+    seen, kept = set(), []
+    for page in pages:
+        lines = page.text.split("\n")
+        fresh = [line for line in lines if line and line not in seen]  # 前面的頁面都沒出現過的行
+        seen.update(lines)  # 這一頁處理完才更新
+        if fresh:
+            kept.append(Page(page.url, "\n".join(fresh)))
+    return kept
+
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+n_lines = sum(len(p.text.split("\n")) for p in pages)
+n_chars = sum(len(p.text) for p in pages)
+for name, kept in [("dedup_lines(min_pages=2)", dedup_lines(pages, 2)), ("dedup_lines_keep_first", dedup_lines_keep_first(pages))]:
+    kept_lines = sum(len(p.text.split("\n")) for p in kept)
+    kept_chars = sum(len(p.text) for p in kept)
+    print(
+        f"{name}：拿掉 {n_lines - kept_lines:,} 行（{1 - kept_lines / n_lines:.1%}）、{n_chars - kept_chars:,} 個字元"
+        f"（{1 - kept_chars / n_chars:.1%}），整頁丟掉 {len(pages) - len(kept)} 頁"
+    )
+
+same_text = Counter(p.text for p in pages)
+copies = {p.url for p in pages if same_text[p.text] == 6}  # 那 6 份一模一樣的頁面
+for name, kept in [("min_pages=2", dedup_lines(pages, 2)), ("keep_first", dedup_lines_keep_first(pages))]:
+    print(f"{name}：6 份一模一樣的頁面留下 {sum(p.url in copies for p in kept)} 份")
+```
+
+### 第 9 集 MinHash + LSH — 狀態：可用
+
+**題目**
+
+簽章有 128 格時，\\( b \times r = 128 \\) 的組合只有 8 種。用 `lsh_probability` 印出每一種組合在 \\( J = 0.8 \\) 與 \\( J = 0.5 \\) 的候選機率：有沒有一種同時讓 \\( J = 0.8 \\) 的機率 >= 0.99、\\( J = 0.5 \\) 的機率 <= 0.1？如果簽章可以更長（\\( b \times r \le 512 \\)，\\( b, r \\) 不必是 128 的因數），符合條件的最短簽章是幾格？代價是什麼？
+
+**練習目標**：S 曲線的位置由 \\( b, r \\) 的比例決定，陡不陡由 \\( b \times r \\) 的大小決定；要又陡又在對的位置，只能加長簽章。
+
+**批改重點**：128 格裡沒有任何一組符合：\\( b=16, r=8 \\) 是 0.947 與 0.061，\\( J = 0.8 \\) 差一點；\\( b=32, r=4 \\) 是 1.000 與 0.873，\\( J = 0.5 \\) 太高。\\( b \times r \le 512 \\) 裡最短的是 \\( b=26, r=8 \\)，208 格（0.992 與 0.097）。代價：簽章是 128 格的 1.6 倍長（記憶體 1.6 倍：每份文件 1.6 KiB），`minhash_signature` 的時間也大約是 1.6 倍。提示：兩層迴圈枚舉 \\( b, r \\)，條件寫成函式。
+
+**參考答案**
+
+```python
+from llmz.pipeline import lsh_probability
+
+
+def ok(bands, rows):
+    return lsh_probability(0.8, bands, rows) >= 0.99 and lsh_probability(0.5, bands, rows) <= 0.1
+
+
+for bands in [1, 2, 4, 8, 16, 32, 64, 128]:
+    rows = 128 // bands
+    p80, p50 = lsh_probability(0.8, bands, rows), lsh_probability(0.5, bands, rows)
+    print(f"128 格：b={bands:3d} r={rows:3d}：P(0.8)={p80:.3f}  P(0.5)={p50:.3f}  {'符合' if ok(bands, rows) else ''}")
+
+size, bands, rows = min((b * r, b, r) for b in range(1, 513) for r in range(1, 513) if b * r <= 512 and ok(b, r))
+print(f"最短的簽章：b={bands}, r={rows}，{size} 格；P(0.8)={lsh_probability(0.8, bands, rows):.3f}，P(0.5)={lsh_probability(0.5, bands, rows):.3f}")
+```
+
 ## 第 14 章 後訓練：SFT 與偏好學習
 
 ### 第 1 集 base model 與指令模型 — 狀態：可用
