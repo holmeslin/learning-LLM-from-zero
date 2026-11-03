@@ -2698,3 +2698,108 @@ for tag in ["select", "nav", "footer", "aside"]:
     after = sum(len(html_to_text(h, base | {tag})) for h in htmls)
     print(f"{tag}：多丟 {before - after:,} 個字元")
 ```
+
+## 第 15 章 後訓練：RL 與可驗證獎勵
+
+### 第 1 集 policy gradient 直覺 — 狀態：可用
+
+**題目**
+
+吃角子老虎機的平均獎勵是 `[0, 3, 2, 5, 4]`，policy 的 logits 是 `[1.0, 0.0, 0.0, -1.0, 0.5]`。不要抽樣：對 5 個動作各算 \\( \pi(a)\, R(a)\, (\text{one\_hot}(a) - \pi) \\)，加起來，和對 `expected_reward` 做 `backward()` 得到的梯度比較。
+
+**練習目標**：\\( \nabla J = \mathbb{E}[R \, \nabla \log \pi(a)] \\) 的期望值，真的就是把每個動作「機率乘上它的推力」加起來；抽樣只是用平均去逼近這個加總。
+
+**批改重點**：兩個向量相同，約 `[-0.805, 0.149, 0.001, 0.164, 0.491]`。要能說出：softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`；抽樣估計的平均會趨近這個加總。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+from llmz.rl import expected_reward
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.tensor([1.0, 0.0, 0.0, -1.0, 0.5], requires_grad=True)
+
+# 對照：直接對 expected_reward 做 backward
+expected_reward(logits, means).backward()
+
+# 不抽樣：把每個動作的 pi(a) * R(a) * (one_hot(a) - pi) 加起來
+with torch.no_grad():
+    probs = softmax(logits)
+    by_hand = sum(probs[a] * means[a] * ((torch.arange(5) == a).float() - probs) for a in range(5))
+
+print("手算的期望   ", [round(x, 3) for x in by_hand.tolist()])
+print("autograd 梯度", [round(x, 3) for x in logits.grad.tolist()])
+print("相同：", torch.allclose(by_hand, logits.grad, atol=1e-6))
+```
+
+### 第 2 集 REINFORCE 玩具版 — 狀態：可用
+
+**題目**
+
+`estimate_gradient` 的批次平均 baseline 把被抽到的樣本也算進平均，所以估計的平均會小 \\( (n-1)/n \\) 倍。改用 leave-one-out baseline：每個樣本的 baseline 是「其他 \\( n-1 \\) 個樣本獎勵的平均」。用 `sample_actions`、`bandit_rewards`、`reinforce_loss` 寫出 `loo_gradient`，取 \\( n=2 \\)、`noise_std=1.0`、policy 全 0，各重複 4000 次，比較「沒有 baseline」「批次平均」「leave-one-out」三種估計的平均（是精確梯度的幾倍）與變異加總。
+
+**練習目標**：baseline 只要和被抽到的動作無關就不影響期望值；批次平均違反了這一點，只是影響很小（\\( n \\) 大時）。
+
+**批改重點**：沒有 baseline 與 leave-one-out 的平均約是精確梯度的 1.0 倍，批次平均約 0.5 倍（\\( n=2 \\) 時 \\( (n-1)/n = 1/2 \\)）；變異加總約 4.5、0.8、3.2：leave-one-out 無偏，變異比沒有 baseline 小，但比批次平均大。數字隨隨機數種子略有變動（4000 次重複）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import bandit_rewards, estimate_gradient, expected_reward, reinforce_loss, sample_actions
+
+
+def loo_gradient(logits, means, n, noise_std, generator):
+    """leave-one-out baseline：每個樣本的 baseline 是「其他 n-1 個樣本獎勵的平均」。"""
+    logits = logits.detach().requires_grad_()
+    actions = sample_actions(logits, n, generator)
+    rewards = bandit_rewards(means, actions, noise_std, generator)
+    baselines = (rewards.sum() - rewards) / (n - 1)
+    reinforce_loss(logits.expand(n, -1), actions, rewards - baselines).backward()
+    return -logits.grad
+
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.zeros(5)
+exact = torch.zeros(5, requires_grad=True)
+expected_reward(exact, means).backward()
+exact = exact.grad
+
+n, repeats = 2, 4000
+generator = torch.Generator().manual_seed(0)
+runs = {
+    "沒有 baseline": torch.stack([estimate_gradient(logits, means, n, False, 1.0, generator) for _ in range(repeats)]),
+    "批次平均": torch.stack([estimate_gradient(logits, means, n, True, 1.0, generator) for _ in range(repeats)]),
+    "leave-one-out": torch.stack([loo_gradient(logits, means, n, 1.0, generator) for _ in range(repeats)]),
+}
+for name, g in runs.items():
+    scale = (g.mean(dim=0) @ exact / (exact @ exact)).item()  # 平均的方向上，是精確梯度的幾倍
+    print(f"{name:14s} 平均是精確梯度的 {scale:.2f} 倍，變異加總 {g.var(dim=0).sum().item():.2f}")
+```
+
+### 第 3 集 GRPO 的 group-relative advantage — 狀態：可用
+
+**題目**
+
+一組 8 個回答、答對 \\( k \\) 個（\\( k = 1, \dots, 7 \\)），獎勵是 1 或 0。對每個 \\( k \\)，用 `group_advantages` 印出答對與答錯的回答的 advantage，不除與除以標準差兩種都印。\\( k = 4 \\) 時，答對與答錯的 advantage 大小相等嗎？\\( k = 1 \\) 時答對的 advantage 是 \\( k = 4 \\) 時的幾倍（兩種算法分別算）？
+
+**練習目標**：group-relative advantage 讓稀有的成功拿到大的推力、常見的成功只拿到小的推力；除以標準差又把這個差距再拉開。
+
+**批改重點**：\\( k = 4 \\) 時兩者大小相等（不除：±0.5；除：±0.935）；\\( k = 1 \\) 時答對的是 +0.875（不除）與 +2.475（除），分別是 \\( k = 4 \\) 時的 1.75 倍與 2.65 倍。答對與答錯的 advantage 加權（各自乘上人數）後總和為 0。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import group_advantages
+
+for k in range(1, 8):  # 8 個回答裡答對 k 個
+    rewards = torch.tensor([[1.0] * k + [0.0] * (8 - k)])
+    plain, normed = group_advantages(rewards, normalize_std=False)[0], group_advantages(rewards, normalize_std=True)[0]
+    print(f"答對 {k} 個：答對的 advantage {plain[0]:+.3f}（不除）{normed[0]:+.3f}（除）；答錯的 {plain[-1]:+.3f}（不除）{normed[-1]:+.3f}（除）")
+```
