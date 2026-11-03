@@ -30,7 +30,8 @@ print([r["step"] for r in records if "val_loss" in r])
 執行結果：
 
 ```text
-TODO
+3 3.3
+[250, 500]
 ```
 
 這裡先手寫三行當範例；真的檔案是 `runs/base/log.jsonl`，200 行。不是每一行都有 `val_loss`（每 250 步才評估一次），畫圖時要用 `"val_loss" in r` 挑出來。
