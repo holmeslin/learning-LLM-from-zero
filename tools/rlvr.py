@@ -1,7 +1,9 @@
-"""第 15 章第 5 集：從 SFT 模型（runs/sft/model.pt）開始做 RLVR，存成 runs/rlvr/model.pt。例：
+"""第 15 章第 5、6 集：從 SFT 模型（runs/sft/model.pt）開始做 RLVR，存成 runs/rlvr/model.pt。例：
 
     uv run tools/rlvr.py                                  # 標準設定（M4 Max 上的時間見第 5 集）
     uv run tools/rlvr.py --out_dir runs/rlvr_seed1 --seed 1   # 另一個種子
+    uv run tools/rlvr.py --no-normalize_std --no-length_norm --length_divisor 4   # 第 6 集：Dr. GRPO（把標準差與回答長度的除法拿掉）
+    uv run tools/rlvr.py --seq_ratio                          # 第 6 集：GSPO（整條回答共用一個比值）
 
 縮小版（smoke）見第 5 集與 tests/test_rl.py。
 """

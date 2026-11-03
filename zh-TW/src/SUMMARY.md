@@ -170,3 +170,5 @@
     - [GRPO 的 group-relative advantage](chapter15/03_group_relative_advantage.md)
     - [GRPO loss 實作與測試](chapter15/04_grpo_loss.md)
     - [RLVR：用可驗證獎勵訓練 SFT 模型](chapter15/05_rlvr.md)
+    - [Dr. GRPO、GSPO 一瞥](chapter15/06_dr_grpo_gspo.md)
+    - [vLLM rollout（選讀：需 GPU）](chapter15/07_vllm_rollout.md)

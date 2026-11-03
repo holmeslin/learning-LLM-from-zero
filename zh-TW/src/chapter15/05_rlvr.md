@@ -85,6 +85,8 @@ sample_batch     0.15 秒
 
 題目每一步都是新抽的（`make_tasks` 一次產生整個訓練過程要用的題目，一步用 16 題）；驗證題固定（種子 1 的 `color` 與 `who` 的 `"valid"` 題，500 題），所以兩個種子、不同學習率的 `val_accuracy` 才能比。和第 14 章一樣，`val_accuracy` 是 greedy 回答的答對比例。
 
+設定裡的 `length_divisor` 與 `seq_ratio` 第 6 集才用，這一集保持預設。
+
 這裡沒有 KL 懲罰、沒有 reference 模型：只有一個模型在更新。原論文的 GRPO 多了一項把 policy 拉回 reference 模型附近的 KL（第 14 章第 5 集的 RLHF 目標就有這一項）；我們的訓練只有幾百步，先不加，後面會看到少了它的影響。
 
 ### smoke 設定

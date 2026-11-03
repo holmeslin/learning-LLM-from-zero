@@ -57,12 +57,14 @@ True
 ### clipped loss
 
 ```python,ignore
+{{#include ../../../src/llmz/rl.py:importance_ratio}}
+
 {{#include ../../../src/llmz/rl.py:grpo_loss}}
 ```
 
-重點在三行：
+`importance_ratio` 的 `seq_ratio`，以及 `grpo_loss` 的 `seq_ratio` 與 `length_divisor`，第 6 集才用到，這一集都用預設值（原始的 GRPO）。重點在三行：
 
-- `ratio`：`logp - old_logp` 是 log 的比值，`exp` 之後就是 \\( \rho \\)。`old_logp` 是 rollout 之後、第一次更新之前，用同一個模型和同一個函式算一次（不帶梯度）。這樣第一次更新時 `ratio` 恰好是 1，不會因為取樣時和訓練時的算法略有不同，就一開始比值不是 1。
+- `ratio`：`importance_ratio` 裡，`logp - old_logp` 是 log 的比值，`exp` 之後就是 \\( \rho \\)。`old_logp` 是 rollout 之後、第一次更新之前，用同一個模型和同一個函式算一次（不帶梯度）。這樣第一次更新時 `ratio` 恰好是 1，不會因為取樣時和訓練時的算法略有不同，就一開始比值不是 1。
 - `objective`：兩項取 `torch.minimum`，沒有 clip 的 \\( \rho A \\) 與夾過的。
 - `per_answer`：只加總 `mask` 為 True 的 token；`length_norm=True` 再除以這條回答的 token 數，最後對 \\( N \\) 條回答平均。
 
@@ -140,7 +142,7 @@ length_norm=False
 
 `length_norm=True`：每條回答的權重一樣（都是 1/2），長的那條每個 token 只分到 1/6，短的那條的唯一一個 token 分到 1/2。`length_norm=False`：每個 token 的權重一樣（1/2），長的那條總權重是短的 3 倍。哪個比較合理，第 6 集（Dr. GRPO）會回頭討論，現在先把它做成參數，可以切換。
 
-補的位置（`mask` 為 False）的梯度是 0。為了讓它們連 `nan` 都不會出現，`ratio` 的那一行先用 `torch.where` 把被遮掉的位置換成 0，再做 `exp`。沒有這一步會怎樣：補的位置模型的 log 機率可能和 `old_logp` 差很多，`exp` 溢位成 `inf`，乘上 mask 的 0 變成 `nan`，而且 `nan` 的梯度會傳回整個模型：
+補的位置（`mask` 為 False）的梯度是 0。為了讓它們連 `nan` 都不會出現，`importance_ratio` 先用 `torch.where` 把被遮掉的位置換成 0，再做 `exp`。沒有這一步會怎樣：補的位置模型的 log 機率可能和 `old_logp` 差很多，`exp` 溢位成 `inf`，乘上 mask 的 0 變成 `nan`，而且 `nan` 的梯度會傳回整個模型：
 
 ```python
 import torch

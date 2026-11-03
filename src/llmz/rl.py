@@ -123,20 +123,35 @@ def token_logprobs(model: nn.Module, ids: Tensor) -> Tensor:
 # ANCHOR_END: token_logprobs
 
 
+# ANCHOR: importance_ratio
+def importance_ratio(logp: Tensor, old_logp: Tensor, mask: Tensor, seq_ratio: bool = False) -> Tensor:
+    """比值 ratio = exp(logp - old_logp)，形狀 (N, T-1)。seq_ratio=False：每個 token 一個比值；
+    seq_ratio=True（第 6 集的 GSPO）：整條回答共用一個，是回答裡各 token 比值的幾何平均（log 比值對 mask 內的 token 取平均再 exp）。"""
+    log_ratio = torch.where(mask, logp - old_logp, torch.zeros_like(logp))  # 被遮掉的位置先歸零再 exp：exp(100) = inf，inf * 0 會變成 nan
+    if seq_ratio:
+        log_ratio = (log_ratio.sum(dim=1) / mask.sum(dim=1).clamp(min=1))[:, None].expand_as(log_ratio)
+    return log_ratio.exp()
+# ANCHOR_END: importance_ratio
+
+
 # ANCHOR: grpo_loss
-def grpo_loss(logp: Tensor, old_logp: Tensor, advantages: Tensor, mask: Tensor, clip_eps: float = 0.2, length_norm: bool = True) -> Tensor:
+def grpo_loss(logp: Tensor, old_logp: Tensor, advantages: Tensor, mask: Tensor, clip_eps: float = 0.2, length_norm: bool = True,
+              seq_ratio: bool = False, length_divisor: float = 1.0) -> Tensor:
     """GRPO 的 clipped policy-gradient loss（省略 KL 項）。
 
     logp、old_logp、mask：(N, T-1)，和 token_logprobs 對齊（mask 用 rollout 的 mask[:, 1:]）；advantages：(N,)，每條回答一個數字。
     old_logp 是 rollout 當時的 policy 算的，不帶梯度。ratio = exp(logp - old_logp)；每個 token 取 min(ratio * A, clip(ratio) * A)。
-    length_norm=True：每條回答先對自己的 token 平均（原始 GRPO）；False：token 加總，長的回答權重大。最後對 N 條回答平均。
+    length_norm=True：每條回答先對自己的 token 平均（原始 GRPO）；False：token 加總再除以 length_divisor（固定的常數，Dr. GRPO），長的回答權重大。最後對 N 條回答平均。
+    seq_ratio、length_divisor 第 6 集才用：預設是上面描述的原始 GRPO。
     """
-    ratio = torch.where(mask, logp - old_logp, torch.zeros_like(logp)).exp()  # 被遮掉的位置先歸零再 exp：exp(100) = inf，inf * 0 會變成 nan
+    ratio = importance_ratio(logp, old_logp, mask, seq_ratio)
     advantages = advantages[:, None]
     objective = torch.minimum(ratio * advantages, ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages)  # (N, T-1)
     per_answer = (objective * mask).sum(dim=1)
     if length_norm:
         per_answer = per_answer / mask.sum(dim=1).clamp(min=1)  # shortcut: 沒有任何 token 的回答分母用 1（分子也是 0）；rollout 至少會有一個 token
+    else:
+        per_answer = per_answer / length_divisor
     return -per_answer.mean()
 # ANCHOR_END: grpo_loss
 
@@ -204,6 +219,8 @@ class RLVRConfig:
     clip_eps: float = 0.2
     normalize_std: bool = True  # group_advantages 要不要除以組內標準差
     length_norm: bool = True  # grpo_loss 要不要對每條回答的 token 平均
+    length_divisor: float = 1.0  # length_norm=False 時，token 加總要除以多少（Dr. GRPO：固定的常數，例如 max_new_tokens）
+    seq_ratio: bool = False  # True：整條回答共用一個序列層級的比值（GSPO），否則每個 token 一個
     grad_clip: float = 1.0
     log_every: int = 10
     eval_every: int = 50
@@ -244,12 +261,12 @@ def train_rlvr(cfg: RLVRConfig, tokenizer=None) -> list[dict]:
             old_logp = token_logprobs(model, ids)  # rollout 當時的 policy 的 log 機率，更新時不變
         for _ in range(cfg.epochs):
             logp = token_logprobs(model, ids)
-            loss = grpo_loss(logp, old_logp, advantages, mask, cfg.clip_eps, cfg.length_norm)
+            loss = grpo_loss(logp, old_logp, advantages, mask, cfg.clip_eps, cfg.length_norm, cfg.seq_ratio, cfg.length_divisor)
             loss.backward()
             grad_norm = clip_grad_norm_(model.parameters(), cfg.grad_clip)
             optimizer.step()
             optimizer.zero_grad()
-        ratio = (logp.detach() - old_logp).exp()  # 最後一次更新前的 ratio
+        ratio = importance_ratio(logp.detach(), old_logp, mask, cfg.seq_ratio)  # 最後一次更新前的 ratio
         rec = {"step": step, "reward": round(out.rewards.mean().item(), 4), "loss": round(loss.item(), 4) + 0.0,  # + 0.0：避免印出 -0.0
                "clip_frac": round((((ratio - 1).abs() > cfg.clip_eps) & mask).sum().item() / mask.sum().item(), 4),
                "mixed_groups": round((out.rewards.std(dim=1) > 0).float().mean().item(), 3),  # 組內有對有錯：只有這些組有梯度

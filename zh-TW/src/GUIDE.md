@@ -83,8 +83,9 @@
 | 第 14 章 | 後訓練：SFT 與偏好學習：base model 與指令模型、chat template 與 loss mask、SFT 玩具版、reward model 的想法、DPO 推導與玩具版實作 | `chapter14/` |
 | 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 | 第 15 章（第 4～5 集） | 後訓練：RL 與可驗證獎勵：GRPO loss 實作與測試、RLVR | `chapter15/` |
+| 第 15 章（第 6～7 集） | 後訓練：RL 與可驗證獎勵：Dr. GRPO、GSPO 一瞥、vLLM rollout（選讀：需 GPU） | `chapter15/` |
 
-還沒寫：第 15 章第 6～7 集。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第三部收尾（對照 CS336 A4、A5，位置尚未決定）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -212,7 +213,9 @@
 | 第 15 章第 1～3 集 | RL 的名詞（policy、reward、動作、平均獎勵 \\( J \\)）、多臂吃角子老虎機（bandit）、policy gradient \\( \nabla J = \mathbb{E}[R \nabla \log \pi(a)] \\)（log 導數技巧、softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`、抽樣估計的誤差約 \\( 1/\sqrt{n} \\)）、`llmz.rl`（`sample_actions`、`bandit_rewards`、`expected_reward`、`reinforce_loss`、`estimate_gradient`、`train_bandit`、`group_advantages`、`verifiable_rewards`、`train_groups`）、gradient ascent、REINFORCE（Williams 1992）與 baseline（不改變期望值、降低變異；批次平均把自己算進去所以縮小 \\( (n-1)/n \\)）、`torch.Generator().manual_seed`、GRPO 的組內平均 baseline 與除以標準差（樣本標準差、`eps`）、全組獎勵相同時 advantage 是 0、一組 \\( G \\) 個回答至少一個答對的機率 \\( 1-(1-p)^G \\)、玩具題 RLVR（3 個 prompt、答對機率 50%／10%／1%；除以標準差時困難題 400 步 0.96～0.98，不除只有 0.02～0.03） |
 | 第 15 章第 4 集 | `llmz.rl` 的 `token_logprobs`（每個 token 的 log 機率，和第 12 章的 `sequence_logprob` 一樣只是不加總，所以比 `ids` 少一格、要搭配 `mask[:, 1:]`）、`grpo_loss`（逐 token 的 clipped policy-gradient loss：比值 \\( \rho = \exp(\text{logp} - \text{old\_logp}) \\)、每個 token 取 \\( \min(\rho A, \text{clip}(\rho, 1\pm\varepsilon) A) \\)、同一條回答共用一個 advantage、`clip_eps`、`length_norm`、`mask`、省略原論文的 KL 項）、importance ratio（\\( \nabla \rho = \rho \nabla \log \pi \\)，\\( \rho = 1 \\) 時和 REINFORCE 一樣）、clip 只關掉「往 advantage 想要的方向已經走過頭」那一側的梯度（走錯方向的永遠有梯度）、`old_logp` 在 rollout 之後、更新之前不帶梯度地算一次、`torch.where` 先把被遮掉的位置歸零再 `exp`（避免 `inf * 0 = nan`）、`torch.minimum`、`.clamp` |
 | 第 15 章第 5 集 | `llmz.rl` 的 `rollout`（每題抽一組回答、保留 token id 與只涵蓋回答的 `mask`（到第一個 `<|endoftext|>` 為止、含它）、`rewards` 形狀 `(題數, group_size)`）、`sample_batch`（和第 11 章的 `generate_cached` 同一套 KV cache，抽樣改成整個 batch 一次抽、不支援 `top_p`；M4 Max 上 128 條回答 `generate_cached` 3.8～5.0 秒、`sample_batch` 0.15～0.25 秒）、`RLVRConfig`、`train_rlvr`（每步：rollout、`reward` 的 0／1、`group_advantages`、不帶梯度的 `old_logp`、對同一批 `epochs` 次 `grpo_loss` 更新；記錄 `reward`／`clip_frac`／`mixed_groups`／`resp_len`／`grad_norm`；沒有 KL 與 reference 模型）、`tools/rlvr.py`、RLVR（用可驗證的 0／1 獎勵）、隨機初始化的模型獎勵全是 0、沒有梯度（所以要先 SFT）、`mixed_groups`（組內有對有錯的比例，只有這些組有梯度）、policy 的「信心」（第一個回答 token 的最大機率）；M4 Max 實測（1000 題 greedy，單次）：SFT 模型上訓練 `color` 與 `who`（預設：學習率 `3e-5`、600 步、約 6.4 分鐘、兩個種子）合計 0.401 變成 0.418～0.426（在雜訊內，沒有學會；`color` 0.491 變成 0.495～0.534、`who` 0.304 變成 0.310～0.335），`mixed_groups` 從 0.33～0.46 掉到 0.07～0.13、信心 0.56 升到 0.95 以上，沒練的 `count` 從 192／192 掉到 141～147；學習率 `1e-5`／`1e-4`／`3e-4` 也沒有進步；對照：只 SFT 100 步（`runs/sft_short`）再用 RLVR 練 `add` 與 `subtract`（`--lr 1e-5`、600 步、各約 313 秒）0.266 變成 0.591～0.694（`add` 0.289 變成 0.910、`subtract` 0.246 變成 0.324～0.513），約 300～350 步後因為組內不再有對有錯而停住；RLVR 放大模型已經有時候會做對的事，沒有可以放大的東西時只會讓模型更確定 |
-| 第 15 章第 6 集以後 | 尚未出版 |
+| 第 15 章第 6 集 | `llmz.rl` 的 `importance_ratio`（`seq_ratio=False`：每個 token 一個比值，被遮掉的位置先歸零再 `exp`；`seq_ratio=True`：整條回答一個，是 `mask` 內各 token 的 log 比值取平均再 `exp`，也就是幾何平均）、`grpo_loss` 新增的 `seq_ratio` 與 `length_divisor`（`length_norm=False` 時 token 加總除以固定的數，預設 1.0）、`RLVRConfig` 同名的欄位（`train_rlvr` 的 `clip_frac` 跟著 `seq_ratio`）、`tools/rlvr.py` 的 `--seq_ratio` 與 `--length_divisor`；Dr. GRPO（Liu 等人 2025，arXiv 2503.20783）指出 GRPO 的兩個偏差：長度偏差（除以回答的 token 數，答錯的長回答每個 token 被壓得比較輕）與難度偏差（除以組內標準差，太容易、太難的題 advantage 被放大），主張拿掉並改除以固定的常數（例如最大生成長度）；GSPO（Zheng 等人 2025，arXiv 2507.18071）的序列層級比值（重要性取樣每個位置只有一個樣本、雜訊隨長度累積）與整條回答一起 clip，clip 範圍比 GRPO 小得多（論文：3e-4 與 4e-4 對 0.2 與 0.27，被 clip 的 token 比例約 0.15 對 0.0013）；序列比值要取平均、不取加總（練習）；M4 Max 實測（`runs/sft_short` 練 `add` 與 `subtract`、學習率 `1e-5`、600 步、兩個種子、每個約 310～323 秒）：GRPO、不除標準差、固定除數、Dr. GRPO、GSPO 的 1000 題 greedy 是 0.558～0.694，看不出哪一種比較好（同一個做法的兩個種子差 0.07～0.10，不比做法之間的差距小）；回答都是 2 個 token，`length_norm` 只差一個常數倍（`grad_norm` 剛好減半）；不除標準差梯度小 2～3.5 倍但 `AdamW` 吸收了；GSPO 在 `clip_eps=0.2` 的 `clip_frac` 是 0.001～0.0012（GRPO 是 0.0024～0.0043），縮小到 0.02 是 0.038 與 0.135，正確率沒有變 |
+| 第 15 章第 7 集 | rollout 是一個 token 接一個 token 的 decode，時間和回答長度成正比（M4 Max 上 128 條一起、一步約 0.036～0.038 秒），更新是整批一次算；rollout 占一步的比例：回答 4 個 token 時 39～44%，64 個 token 以上 65～76%（三次執行的範圍）；OpenRLHF 的 README 說他們的 RLHF 有 80% 的時間在取樣；推論引擎 vLLM（continuous batching、PagedAttention（Kwon 等人 2023，arXiv 2309.06180）、automatic prefix caching、`SamplingParams` 的 `n`）與它的用法（`LLM`、`SamplingParams`、`generate`、`RequestOutput` 的 `prompt_token_ids` 與 `outputs`、`CompletionOutput` 的 `text`／`token_ids`／`logprobs`／`finish_reason`，`python,norun`：沒有 NVIDIA 顯示卡，沒跑過）；用推論引擎多出來的三件事：權重要同步（TRL 的 `use_vllm`、`colocate` 與 `server`）、兩邊的機率有差距（所以用訓練程式重算 `old_logp`，GSPO 論文主張序列層級的比值比較能容忍）、要等最長的回答（partial rollout）；`sample_batch` 與 vLLM 的差別；第 15 章的自我挑戰（`tests/test_rl.py`） |
+| 第三部收尾（對照 CS336 A4、A5） | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -348,8 +351,10 @@
 | policy、reward、bandit、policy gradient、`reinforce_loss`、`estimate_gradient` | 第 15 章第 1 集 | 只說「用獎勵訓練模型」，不談梯度怎麼來 |
 | REINFORCE、`train_bandit`、baseline 與變異 | 第 15 章第 2 集 | 不談 baseline |
 | GRPO、`group_advantages`、`verifiable_rewards`、`train_groups`、是否除以標準差 | 第 15 章第 3 集 | 只說 advantage 是獎勵減 baseline |
-| `token_logprobs`、`grpo_loss`、importance ratio、clip、`length_norm` | 第 15 章第 4 集 | 只說 GRPO 是「同一個 prompt 的一組回答互相比」，不談 loss 的樣子 |
+| `token_logprobs`、`importance_ratio`（只有 token 層級）、`grpo_loss`、importance ratio、clip、`length_norm` | 第 15 章第 4 集 | 只說 GRPO 是「同一個 prompt 的一組回答互相比」，不談 loss 的樣子 |
 | `rollout`、`sample_batch`、`RLVRConfig`、`train_rlvr`、`tools/rlvr.py`、RLVR | 第 15 章第 5 集 | 只說「用可驗證獎勵訓練模型」，不談怎麼把 GRPO 接到語言模型 |
+| Dr. GRPO、`length_divisor`、GSPO、`seq_ratio`、序列層級的比值、長度偏差與難度偏差 | 第 15 章第 6 集 | 只說 GRPO 的比值是每個 token 一個、advantage 除以標準差、loss 除以回答長度，不談它們各帶來什麼偏差 |
+| vLLM、PagedAttention 與 prefix caching 用在 rollout、權重同步、訓練與推論引擎的機率差距、partial rollout | 第 15 章第 7 集 | 只用自己的 `sample_batch`，不談推論引擎 |
 
 ---
 

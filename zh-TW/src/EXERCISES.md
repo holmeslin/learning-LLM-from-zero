@@ -3455,3 +3455,83 @@ for kind in ["color", "who"]:
     mixed = 64 - all_right - all_wrong  # 只有這些組的 advantage 不是 0
     print(f"{kind:5s} 平均獎勵 {rewards.mean():.2f}  整組全對 {all_right}  整組全錯 {all_wrong}  有對有錯 {mixed}（{mixed / 64:.0%}）")
 ```
+
+### 第 6 集 Dr. GRPO、GSPO 一瞥 — 狀態：可用
+
+**題目**
+
+GSPO 的序列比值是各 token 的 log 比值取**平均**再 `exp`（幾何平均）。如果改成**加總**再 `exp`（整條回答的機率比），會怎樣？對長度 1、2、4、8、16 的回答，每個 token 的 log 比值都是 0.05（比值 1.051，每個 token 單看都在 \\( [0.8, 1.2] \\) 裡）：算兩種序列比值，並用 advantage +1、`clip_eps=0.2` 的 loss 梯度，看哪些長度的回答被整條擋住（梯度全是 0）。再確認平均那一種就是 `grpo_loss(..., seq_ratio=True)`。
+
+**練習目標**：為什麼 GSPO 的序列比值要除以長度：不除的話，比值隨回答長度指數成長，不同長度的回答要用不同的 clip 範圍。
+
+**批改重點**：平均的比值對每個長度都是 1.051，梯度都在；加總的比值是 \\( e^{0.05n} \\)：1.051、1.105、1.221、1.492、2.226，長度 4 以上超過 1.2，整條回答梯度全是 0。要讓長度 16 的回答不被擋，clip 的上限至少要 2.23，也就是說同一個 \\( \varepsilon \\) 對長的回答太嚴、對短的回答太鬆。最後一行印出 `True`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import grpo_loss
+
+
+def sequence_loss(log_ratio, advantage, how, eps=0.2):
+    """一條回答、一個序列比值：how="平均" 是 GSPO（幾何平均），how="加總" 是整條回答的機率比。"""
+    s = (log_ratio.mean() if how == "平均" else log_ratio.sum()).exp()
+    return -torch.minimum(s * advantage, s.clamp(1 - eps, 1 + eps) * advantage)
+
+
+print("長度  平均的比值  加總的比值  平均版有梯度  加總版有梯度")
+for n in [1, 2, 4, 8, 16]:
+    log_ratio = torch.full((n,), 0.05, requires_grad=True)  # 每個 token 的比值都是 e^0.05 = 1.051，單看每個 token 都在 0.8～1.2 裡
+    grads, ratios = {}, {}
+    for how in ["平均", "加總"]:
+        log_ratio.grad = None
+        sequence_loss(log_ratio, 1.0, how).backward()
+        grads[how] = log_ratio.grad.abs().sum().item() > 0
+        ratios[how] = (log_ratio.mean() if how == "平均" else log_ratio.sum()).exp().item()
+    print(f"{n:3d}  {ratios['平均']:9.3f}  {ratios['加總']:9.3f}  {str(grads['平均']):>10s}  {str(grads['加總']):>10s}")
+
+# 平均版就是 llmz 的 seq_ratio=True
+logp = torch.full((1, 8), 0.05, requires_grad=True)
+mask = torch.ones(1, 8, dtype=torch.bool)
+by_llmz = grpo_loss(logp, torch.zeros(1, 8), torch.ones(1), mask, seq_ratio=True)
+by_hand = sequence_loss(torch.full((8,), 0.05), 1.0, "平均")
+print("和 grpo_loss(seq_ratio=True) 一致：", torch.allclose(by_llmz, by_hand))
+```
+
+### 第 7 集 vLLM rollout（選讀：需 GPU） — 狀態：可用
+
+**題目**
+
+在 CPU 上，用隨機初始化的小模型（`d_model=128`、2 層）、64 條各 16 個 token 的提示，量 `sample_batch` 生成 4、16、64、128 個 token 各要多久（rollout），與對同一批「提示加回答」做一次 forward 加 backward（更新）要多久。印出 rollout 占兩者加總的比例。比例隨回答長度怎麼變？為什麼？
+
+**練習目標**：rollout 是一步接一步的 decode，更新是整批一次算完，所以回答越長，rollout 越成為 RL 的瓶頸，這是 RL 要用 vLLM 這類推論引擎的原因。
+
+**批改重點**：rollout 的時間幾乎和回答長度成正比（生成 128 個 token 約是 4 個的 20 倍）；更新的時間成長慢得多（序列變長，但所有 token 一起算）。所以 rollout 的比例隨長度上升，一開始快、後來趨緩（某一次：42%、62%、85%、88%）。實際的秒數隨機器與當時的負載不同，但「比例隨長度上升」的趨勢要看得到。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.profile import timeit
+from llmz.rl import sample_batch, token_logprobs
+
+torch.manual_seed(0)
+device = torch.device("cpu")
+model = TransformerLM(ModelConfig(vocab_size=257, context_length=256, d_model=128, n_layers=2, n_heads=4, d_ff=256))
+prompts = torch.randint(0, 257, (64, 16))  # 64 條提示，每條 16 個 token
+
+print("回答長度  rollout     更新（forward + backward）  rollout 的比例")
+for n in [4, 16, 64, 128]:
+    ids = sample_batch(model, prompts, n)  # (64, 16 + n)
+
+    def update():
+        token_logprobs(model, ids).sum().backward()
+        model.zero_grad()
+
+    t_rollout = timeit(lambda: sample_batch(model, prompts, n), device, warmup=1, repeat=3)
+    t_update = timeit(update, device, warmup=1, repeat=3)
+    print(f"{n:6d}  {t_rollout:8.3f} 秒  {t_update:12.3f} 秒  {t_rollout / (t_rollout + t_update):14.0%}")
+```

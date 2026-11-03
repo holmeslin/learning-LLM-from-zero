@@ -17,6 +17,7 @@ from llmz.rl import (
     expected_reward,
     group_advantages,
     grpo_loss,
+    importance_ratio,
     reinforce_loss,
     rollout,
     sample_actions,
@@ -338,3 +339,88 @@ def test_rlvr_raises_the_reward_it_is_given(tmp_path, monkeypatch):
     records = train_rlvr(cfg, TOK)[1:]
     first, last = sum(r["reward"] for r in records[:3]) / 3, sum(r["reward"] for r in records[-3:]) / 3
     assert 0.3 < first < 0.7 and last > first + 0.2  # 種子 0～4 實測：開頭 0.49～0.59，結尾 0.85～0.93
+
+
+# ---- 第 15 章第 6 集：序列層級的比值（GSPO）與固定的長度除數（Dr. GRPO） ----
+
+
+def loss_and_grad(logp_values, old_values, advantages, mask=None, **kwargs):
+    logp = torch.tensor(logp_values, requires_grad=True)
+    mask = torch.ones_like(logp, dtype=torch.bool) if mask is None else mask
+    loss = grpo_loss(logp, torch.tensor(old_values), torch.tensor(advantages), mask, **kwargs)
+    loss.backward()
+    return loss.item(), logp.grad
+
+
+def test_sequence_ratio_of_one_token_answers_equals_the_token_ratio():
+    # 長度為 1：序列比值 = exp(那一個 token 的 log 比值)，和 token 層級完全一樣，連梯度（含 clip）都一樣
+    logp, old = [[0.4], [-0.9], [0.1], [-0.3]], [[0.0], [0.0], [0.0], [0.0]]
+    advantages = [1.0, 1.0, -2.0, -0.5]  # 比值 1.49、0.41、1.11、0.74：clip 的每一種情況都有
+    token = loss_and_grad(logp, old, advantages, seq_ratio=False)
+    seq = loss_and_grad(logp, old, advantages, seq_ratio=True)
+    assert math.isclose(token[0], seq[0], rel_tol=1e-6)
+    assert torch.allclose(token[1], seq[1], atol=1e-7)
+
+
+def test_sequence_ratio_is_the_geometric_mean_of_the_token_ratios():
+    # 兩個 token 的比值是 e^0.1 與 e^-0.1（都在 clip 範圍內）：幾何平均是 1，所以 loss = -A * 1，兩個 token 的梯度一樣大（-0.5）
+    loss, grad = loss_and_grad([[0.1, -0.1]], [[0.0, 0.0]], [1.0], seq_ratio=True)
+    assert math.isclose(loss, -1.0, rel_tol=1e-6)
+    assert torch.allclose(grad, torch.tensor([[-0.5, -0.5]]), atol=1e-6)
+    # token 層級：每個 token 的梯度是 -A * rho / 2，比值大的 token 被推得比較用力
+    _, grad = loss_and_grad([[0.1, -0.1]], [[0.0, 0.0]], [1.0], seq_ratio=False)
+    assert torch.allclose(grad, torch.tensor([[-0.5 * math.exp(0.1), -0.5 * math.exp(-0.1)]]), atol=1e-6)
+
+
+def test_sequence_ratio_blocks_or_passes_the_whole_answer_together():
+    # A = +1、第一個 token 的比值 e^0.5（超過 1.2）、第二個是 e^-0.1
+    # token 層級：只有第一個 token 被擋住（梯度 0），第二個照常。序列比值 e^0.2 = 1.221 > 1.2：整條一起被擋住
+    _, token = loss_and_grad([[0.5, -0.1]], [[0.0, 0.0]], [1.0], seq_ratio=False)
+    _, seq = loss_and_grad([[0.5, -0.1]], [[0.0, 0.0]], [1.0], seq_ratio=True)
+    assert token[0, 0] == 0.0 and token[0, 1] != 0.0
+    assert torch.equal(seq, torch.zeros(1, 2))
+    # 反過來：第一個 token e^0.3 超過 1.2，序列比值 e^0.15 = 1.162 在範圍內：token 層級擋住一個，序列層級兩個都有梯度
+    _, token = loss_and_grad([[0.3, 0.0]], [[0.0, 0.0]], [1.0], seq_ratio=False)
+    _, seq = loss_and_grad([[0.3, 0.0]], [[0.0, 0.0]], [1.0], seq_ratio=True)
+    assert token[0, 0] == 0.0
+    assert torch.allclose(seq, torch.full((1, 2), -0.5 * math.exp(0.15)), atol=1e-6)
+
+
+def test_sequence_ratio_ignores_padding_positions():
+    # 第二條只有一個 token；被遮掉的位置即使 log 比值是 100 也不能影響平均，也不能有梯度或 nan
+    mask = torch.tensor([[True, True], [True, False]])
+    loss, grad = loss_and_grad([[0.2, -0.2], [0.1, 100.0]], [[0.0, 0.0], [0.0, 0.0]], [1.0, 1.0], mask, seq_ratio=True)
+    assert math.isclose(loss, -(1.0 + math.exp(0.1)) / 2, rel_tol=1e-6)
+    assert torch.allclose(grad, torch.tensor([[-0.25, -0.25], [-0.5 * math.exp(0.1), 0.0]]), atol=1e-6)
+
+
+def test_importance_ratio_is_the_same_number_on_every_token_of_an_answer_when_sequence_level():
+    logp, old = torch.tensor([[0.3, 0.1, 0.5], [0.0, 0.0, 0.0]]), torch.zeros(2, 3)
+    mask = torch.tensor([[True, True, False], [True, True, True]])
+    assert torch.allclose(importance_ratio(logp, old, mask), torch.exp(torch.tensor([[0.3, 0.1, 0.0], [0.0, 0.0, 0.0]])))
+    seq = importance_ratio(logp, old, mask, seq_ratio=True)
+    assert torch.allclose(seq, torch.tensor([[math.exp(0.2)] * 3, [1.0] * 3]), atol=1e-6)
+
+
+def test_length_divisor_replaces_the_per_answer_length_when_per_answer_averaging_is_off():
+    # 兩條回答 2 個與 1 個 token，advantage 1.0 與 0.5；token 加總之後都除以同一個 4，不管各自多長
+    loss, grad = loss_and_grad([[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [1.0, 0.5], MASK2, length_norm=False, length_divisor=4.0)
+    assert math.isclose(loss, -(2 * 1.0 / 4 + 0.5 / 4) / 2, rel_tol=1e-6)
+    assert torch.allclose(grad, torch.tensor([[-0.125, -0.125], [-0.0625, 0.0]]), atol=1e-7)
+    _, plain = loss_and_grad([[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [1.0, 0.5], MASK2, length_norm=False)
+    assert torch.allclose(grad * 4, plain, atol=1e-7)  # 只差一個常數倍：沒有哪一條回答被特別照顧
+
+
+def test_length_divisor_does_nothing_while_per_answer_averaging_is_on():
+    a = loss_and_grad([[0.1, 0.2], [0.3, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [1.0, -1.0], MASK2, length_norm=True)
+    b = loss_and_grad([[0.1, 0.2], [0.3, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [1.0, -1.0], MASK2, length_norm=True, length_divisor=7.0)
+    assert a[0] == b[0] and torch.equal(a[1], b[1])
+
+
+def test_smoke_rlvr_with_sequence_ratio_and_a_fixed_length_divisor(tmp_path):
+    cfg = smoke_config(tmp_path, seq_ratio=True, length_norm=False, length_divisor=4.0, normalize_std=False)
+    records = train_rlvr(cfg, TOK)
+    assert [r["step"] for r in records] == [0, 1, 2, 3]
+    assert all(math.isfinite(r["loss"]) and 0.0 <= r["clip_frac"] <= 1.0 for r in records[1:])
+    one_epoch = train_rlvr(smoke_config(tmp_path, seq_ratio=True, epochs=1), TOK)
+    assert all(r["clip_frac"] == 0.0 for r in one_epoch[1:])  # 只更新一次：序列比值也恆為 1
