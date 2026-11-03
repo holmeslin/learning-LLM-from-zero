@@ -65,8 +65,9 @@
 | 第 1 章 | 張量與剛好夠用的數學 | `chapter1/` |
 | 第 2 章 | autograd 與訓練迴圈 | `chapter2/` |
 | 第 3 章 | Tokenizer：從 bytes 到 token | `chapter3/` |
+| 第 4 章 | Transformer 的零件 | `chapter4/` |
 
-還沒寫：第 4 章 Transformer 的零件、第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 5 章 訓練、第 6 章 生成與實驗、附錄一，以及第二部（第 7～11 章、附錄二）與第三部（第 12～15 章）。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -173,7 +174,8 @@
 | 第 1 章 | 取得程式碼與 `uv run` 固定句型、`torch.tensor`、`.sum()`／`.item()`、`.shape`／`.dtype`／`.float()`／`.reshape`／`torch.zeros`／`torch.ones`／`torch.arange`、索引與切片（含用索引張量取多個位置）、broadcasting 與 `.sum(dim=, keepdim=)`、`torch.dot`／`@`／`.norm()`、矩陣乘法與 `.T`、`torch.einsum` 與 `.transpose()`／`torch.equal`、`get_device()` 與 `.to(device)`、`torch.manual_seed`／`torch.rand`／`torch.randn`／`torch.randint`／`.mean()`／`.std()`／`.abs()`、用有限差分算導數與梯度（純 Python 浮點數與 `torch.zeros_like`／`.clone()`）、手寫 5 步梯度下降、自己寫的 softmax（`torch.exp`、`.max()`）、`torch.log`／`.prod()`／`torch.multinomial`／`torch.argmax`、cross-entropy 與 perplexity、log-sum-exp，以及 `llmz.functional` 的 `softmax`／`logsumexp`／`log_softmax`／`cross_entropy`／`perplexity` |
 | 第 2 章 | `requires_grad=True`／`.backward()`／`.grad`／`grad_fn`、`torch.no_grad()`／`.grad.zero_()`／就地運算（結尾底線）、`nn.Module` 子類別（`super().__init__()`、`nn.Parameter`、`forward`、`model(x)`、`parameters()`／`named_parameters()`、`model.to(device)`）、MSE loss、自己寫的簡易 `SGD` 類別（`step()`／`zero_grad()`、`p.grad = None`）、五步訓練迴圈固定句型、線性回歸完整範例、`state_dict()`／`torch.save`／`torch.load`／`load_state_dict`／`fill_`、`llmz.utils.count_parameters`、`numel()`、記憶體（參數 4 位元組、梯度 4、AdamW 狀態 8）與 FLOPs（矩陣乘法 \\( 2mkn \\)、訓練一個 token 約 6 × 參數量）估算 |
 | 第 3 章 | `ord`／`chr`、`str.encode("utf-8")`／`bytes.decode(errors="replace")`、`bytes([...])`、`Counter`、BPE 的想法與次數相同取較大 pair 的規則、`regex` 套件與 `GPT2_PATTERN`、特殊 token 與 `re.escape`／`re.split`、`multiprocessing.Pool` 與 `if __name__ == "__main__":`、`yield`／`yield from`、`io.StringIO`、`json`、latin-1、`array.array("H")`、`np.memmap`、HTTP Range、`llmz.tokenizer`（`pretokenize`、`split_on_special`、`count_words`、`count_pairs`、`merge_word`、`base_vocab`、`train_bpe_naive`、`count_words_parallel`、`train_bpe`、`Tokenizer` 的 `encode_word`／`encode`／`decode`／`encode_iterable`／`save`／`load`）、`llmz.data`（`download`、`cut_at_last_document`、`tokenize_to_file`、`load_tokens`）、`tools/prepare_data.py` 與標準語料（train 40,720,162 個 token、valid 5,461,883 個、vocab 10000、4.12 bytes/token） |
-| 第 4 章以後 | 尚未出版 |
+| 第 4 章 | B／T／d_model 的意義與標準設定（d_model 512、4 層、16 head、d_ff 1344、vocab 10000、context 256）、`torch.allclose`、`llmz.layers`（`Linear`（無 bias、`(out, in)`、初始化 \\( \sqrt{2/(in+out)} \\) 截 3σ）、`Embedding`、`RMSNorm`（float32 算、`eps`）、`silu`、`SwiGLU`、`SiLUFFN`、`Identity`）、`torch.sigmoid`、RoPE 的旋轉與相對位置性質、`llmz.attention`（`RoPE` 與 `register_buffer`、`causal_mask`／`torch.tril`、`scaled_dot_product_attention`／`masked_fill`／`-inf`、`MultiHeadSelfAttention` 的 reshape／transpose 流程）、`torch.stack`／`flatten`／`expand`、`llmz.model`（`ModelConfig` dataclass 含消融開關、`TransformerBlock` pre-norm 與殘差、`TransformerLM`、`nn.ModuleList`）、輸入 `ids[:, :-1]`／答案 `ids[:, 1:]` 與 `reshape(-1, V)` 算 loss、未訓練 loss ≈ ln V、參數量（標準設定 22,696,448）與 FLOPs（forward 每 token 37.2 MFLOPs，訓練 41M token 4.6 PFLOPs）估算；只用 `F.scaled_dot_product_attention`、`F.rms_norm`、`F.silu` 驗證 |
+| 第 5 章以後 | 尚未出版 |
 
 ### 4.2 固定句型
 
@@ -218,7 +220,21 @@
 | `Tokenizer`、`encode`、`decode` | 第 3 章第 9、10 集 | 只訓練不 encode |
 | `yield`、`encode_iterable`、`save`／`load` | 第 3 章第 11 集 | 整段文字一次 encode |
 | `llmz.data`、`np.memmap`、`tools/prepare_data.py`、標準語料 | 第 3 章第 14 集 | 不碰資料檔 |
-| Transformer 零件（Linear、Embedding、RMSNorm、attention、RoPE） | 第 4 章 | 不談模型結構 |
+| `Linear`、初始化、`torch.allclose` | 第 4 章第 2 集 | 用 `x @ W` 手寫 |
+| `Embedding` | 第 4 章第 3 集 | 用 `table[ids]` |
+| `RMSNorm` | 第 4 章第 4 集 | 不正規化 |
+| `silu`、`SwiGLU`、`torch.sigmoid` | 第 4 章第 5 集 | 不談啟用函式 |
+| RoPE 的想法、`torch.stack` | 第 4 章第 6 集 | 不談位置 |
+| `RoPE` 模組、`register_buffer`、`flatten` | 第 4 章第 7 集 | 用第 6 集的 2 維旋轉 |
+| `-inf` 遮罩與 softmax | 第 4 章第 8 集 | 不遮 |
+| `scaled_dot_product_attention`、`masked_fill`、`transpose(-2, -1)` | 第 4 章第 9 集 | 手寫 `softmax(q @ k.T) @ v` |
+| `causal_mask`、`torch.tril` | 第 4 章第 10 集 | 不遮未來 |
+| `MultiHeadSelfAttention`、head 的 reshape／transpose | 第 4 章第 11 集 | 單一 head |
+| RoPE 接進 attention、`expand` | 第 4 章第 12 集 | 不加位置 |
+| `ModelConfig`、`TransformerBlock`、殘差、pre-norm | 第 4 章第 13 集 | 單獨用零件 |
+| `TransformerLM`、`nn.ModuleList`、shift 一格算 loss | 第 4 章第 14 集 | 用 block |
+| 參數量與 FLOPs 的逐項公式 | 第 4 章第 15 集 | 用 `count_parameters` 數 |
+| 優化器（`Optimizer` 基底、AdamW）、學習率排程、梯度裁剪、資料載入、checkpoint、訓練迴圈 | 第 5 章 | 用第 2 章的簡易 `SGD` |
 
 ---
 

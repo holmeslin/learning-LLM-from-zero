@@ -870,3 +870,385 @@ for t in ["The ball was in the park.", "Quantum physics puzzles everyone."]:
 ### 第 14 集 把 TinyStories 轉成 token 檔 — 狀態：不出題
 
 這集是跑 `uv run tools/prepare_data.py`。讀者跑不起來時先看網路（下載要連到 huggingface.co）與 `data/` 目錄的權限；跑完的 token 數應該和書上一樣，不一樣多半是檔案不完整，刪掉 `data/` 重跑。
+
+---
+
+## 第 4 章 Transformer 的零件
+
+### 第 1 集 一張圖看懂 Transformer LM — 狀態：可用
+
+**題目**
+
+不用 `llmz`，只用 `torch.randint`、`torch.randn`、索引與 `@`，做出 B=3、T=4、vocab 20、d_model 8 的 `ids`、embedding 查表結果與 logits，印出三者的形狀。
+
+**練習目標**：記住 `(B, T)` → `(B, T, d_model)` → `(B, T, vocab_size)`。
+
+**批改重點**：`table[ids]` 的索引；最後乘的矩陣是 `(d_model, vocab_size)`。
+
+**參考答案**
+
+```python
+import torch
+
+torch.manual_seed(0)
+ids = torch.randint(0, 20, (3, 4))
+x = torch.randn(20, 8)[ids]
+logits = x @ torch.randn(8, 20)
+print(ids.shape, x.shape, logits.shape)
+```
+
+### 第 2 集 Linear（自己寫） — 狀態：可用
+
+**題目**
+
+建立 `Linear(6, 2)`，輸入 `torch.randn(4, 6)`，印出輸出形狀，並用 `torch.allclose` 確認輸出等於 `x @ layer.weight.T`。再把 1000 層 `Linear(64, 64)` 串起來跑一個 `torch.randn(10, 64)`，印出最後輸出的標準差（四捨五入到小數第二位），看它有沒有爆掉或消失。
+
+**練習目標**：`Linear` 的形狀與初始化效果。
+
+**批改重點**：1000 層後標準差應該仍在 1 的量級（不是 0 也不是 inf）；用 `for` 迴圈即可。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import Linear
+
+torch.manual_seed(0)
+layer = Linear(6, 2)
+x = torch.randn(4, 6)
+print(layer(x).shape, torch.allclose(layer(x), x @ layer.weight.T))
+h = torch.randn(10, 64)
+for _ in range(1000):
+    h = Linear(64, 64)(h)
+print(round(h.std().item(), 2))
+```
+
+### 第 3 集 Embedding — 狀態：可用
+
+**題目**
+
+`Embedding(5, 3)`，用 `ids = torch.tensor([4, 4, 1])` 查表，確認前兩列相同、第三列不同；再印出 `count_parameters`。
+
+**練習目標**：同一個 id 永遠拿到同一列；參數量是 `num × dim`。
+
+**批改重點**：`torch.equal(out[0], out[1])` 為 `True`；參數 15。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import Embedding
+from llmz.utils import count_parameters
+
+torch.manual_seed(0)
+emb = Embedding(5, 3)
+out = emb(torch.tensor([4, 4, 1]))
+print(torch.equal(out[0], out[1]), torch.equal(out[0], out[2]))
+print(count_parameters(emb))
+```
+
+### 第 4 集 RMSNorm — 狀態：可用
+
+**題目**
+
+做一個 `(3, 8)` 的張量，三列分別乘 0.01、1、100。過 `RMSNorm(8)` 之後，印出每一列的均方根（自己用 `(y * y).mean(dim=-1).sqrt()` 算），確認都接近 1。再把 `norm.weight` 在 `no_grad` 裡全部填成 2，看均方根變成多少。
+
+**練習目標**：每列各自正規化；`weight` 是之後的縮放。
+
+**批改重點**：三列都是 1.0；填 2 之後是 2.0。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import RMSNorm
+
+torch.manual_seed(0)
+x = torch.randn(3, 8) * torch.tensor([[0.01], [1.0], [100.0]])
+norm = RMSNorm(8)
+y = norm(x)
+print((y * y).mean(dim=-1).sqrt())
+with torch.no_grad():
+    norm.weight.fill_(2.0)
+print((norm(x) ** 2).mean(dim=-1).sqrt())
+```
+
+### 第 5 集 SiLU 與 SwiGLU — 狀態：可用
+
+**題目**
+
+(1) 自己用 `torch.exp` 寫出 sigmoid，和 `torch.sigmoid` 在 `[-3, 0, 3]` 上比對。(2) 建立 `SwiGLU(8, 32)`，印出參數量並手算驗證是 \\( 3 \times 8 \times 32 \\)。
+
+**練習目標**：sigmoid 的定義；SwiGLU 三個矩陣。
+
+**批改重點**：`1 / (1 + torch.exp(-x))`；參數 768。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.layers import SwiGLU
+from llmz.utils import count_parameters
+
+x = torch.tensor([-3.0, 0.0, 3.0])
+print(torch.allclose(1 / (1 + torch.exp(-x)), torch.sigmoid(x)))
+print(count_parameters(SwiGLU(8, 32)), 3 * 8 * 32)
+```
+
+### 第 6 集 位置資訊與 RoPE 的想法 — 狀態：可用
+
+**題目**
+
+用第 6 集的 `rotate` 函式，固定 `q`、`k` 與角度 0.5，印出位置差 0、1、2、3 的點積各一個（取 (m, n) = (d, 0)），再印 (10, 7) 的點積，確認它等於差 3 的那個。
+
+**練習目標**：旋轉後的點積只看位置差。
+
+**批改重點**：(10, 7) 與 (3, 0) 相同。
+
+**參考答案**
+
+```python
+import torch
+
+
+def rotate(v, angle):
+    c, s = torch.cos(angle), torch.sin(angle)
+    return torch.stack((v[0] * c - v[1] * s, v[0] * s + v[1] * c))
+
+
+theta = torch.tensor(0.5)
+q, k = torch.tensor([1.0, 0.5]), torch.tensor([0.2, -1.0])
+for d in range(4):
+    print(d, round((rotate(q, d * theta) @ rotate(k, 0 * theta)).item(), 4))
+print(round((rotate(q, 10 * theta) @ rotate(k, 7 * theta)).item(), 4))
+```
+
+### 第 7 集 RoPE 實作 — 狀態：可用
+
+**題目**
+
+`RoPE(d_k=4, max_seq_len=8)`，印出 `rope.cos` 的形狀與第 0 列（位置 0 的 cos 應該全是 1）。對一個 `torch.randn(1, 3, 4)` 用位置 `[0, 1, 2]` 旋轉，確認每個位置的向量長度不變，而且位置 0 的向量完全沒變。
+
+**練習目標**：cos／sin 表的形狀；位置 0 不轉；長度不變。
+
+**批改重點**：`rope.cos[0]` 全 1；`torch.allclose(out[0, 0], x[0, 0])`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import RoPE
+
+torch.manual_seed(0)
+rope = RoPE(4, 8)
+print(rope.cos.shape, rope.cos[0])
+x = torch.randn(1, 3, 4)
+out = rope(x, torch.arange(3))
+print(torch.allclose(out.norm(dim=-1), x.norm(dim=-1)), torch.allclose(out[0, 0], x[0, 0]))
+```
+
+### 第 8 集 數值穩定的 softmax — 狀態：可用
+
+**題目**
+
+對 `[[5.0, -inf, 3.0], [-inf, -inf, 1.0]]` 做 `llmz.functional.softmax`，先猜結果再執行。然後說明為什麼第二列不會是 `nan`。
+
+**練習目標**：`-inf` 的位置機率 0；只要有一個不是 `-inf` 就安全。
+
+**批改重點**：第二列是 `[0, 0, 1]`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+
+inf = float("inf")
+print(softmax(torch.tensor([[5.0, -inf, 3.0], [-inf, -inf, 1.0]]), dim=-1))
+```
+
+### 第 9 集 scaled dot-product attention — 狀態：可用
+
+**題目**
+
+q、k、v 都是 `torch.randn(2, 3, 4)`（沒有 mask）。自己用 `@`、`transpose`、`softmax` 寫出 attention，和 `scaled_dot_product_attention` 的結果 `allclose` 比對。
+
+**練習目標**：公式三步：分數、softmax、加權 value。
+
+**批改重點**：要除以 `4 ** 0.5`；softmax 沿最後一維。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import scaled_dot_product_attention
+from llmz.functional import softmax
+
+torch.manual_seed(0)
+q, k, v = torch.randn(2, 3, 4), torch.randn(2, 3, 4), torch.randn(2, 3, 4)
+mine = softmax(q @ k.transpose(-2, -1) / 4 ** 0.5, dim=-1) @ v
+print(torch.allclose(mine, scaled_dot_product_attention(q, k, v), atol=1e-6))
+```
+
+### 第 10 集 causal mask — 狀態：可用
+
+**題目**
+
+用 `causal_mask(5)` 和 `scaled_dot_product_attention` 算一個 T=5 的 attention（q、k、v 隨機、d=4）。把 `v[4]` 改成全 0 再算一次，確認前四個位置的輸出完全沒變。
+
+**練習目標**：mask 真的擋住了未來。
+
+**批改重點**：比較 `out[:4]` 與 `out2[:4]`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import causal_mask, scaled_dot_product_attention
+
+torch.manual_seed(0)
+q, k, v = torch.randn(5, 4), torch.randn(5, 4), torch.randn(5, 4)
+out = scaled_dot_product_attention(q, k, v, causal_mask(5))
+v2 = v.clone()
+v2[4] = 0
+out2 = scaled_dot_product_attention(q, k, v2, causal_mask(5))
+print(torch.allclose(out[:4], out2[:4]), torch.allclose(out[4], out2[4]))
+```
+
+### 第 11 集 multi-head attention — 狀態：可用
+
+**題目**
+
+建立 `MultiHeadSelfAttention(d_model=8, n_heads=2)` 與 `n_heads=4` 各一個，印出兩者的參數量，說明為什麼一樣。再餵 `torch.randn(1, 3, 8)` 印出輸出形狀。
+
+**練習目標**：head 數不影響參數量。
+
+**批改重點**：兩者都是 4 × 8 × 8 = 256。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import MultiHeadSelfAttention
+from llmz.utils import count_parameters
+
+torch.manual_seed(0)
+a, b = MultiHeadSelfAttention(8, 2), MultiHeadSelfAttention(8, 4)
+print(count_parameters(a), count_parameters(b))
+print(a(torch.randn(1, 3, 8)).shape)
+```
+
+### 第 12 集 把 RoPE 接進 attention — 狀態：可用
+
+**題目**
+
+建立有 RoPE 的 `MultiHeadSelfAttention(16, 4, rope=RoPE(4, 32))`。輸入 `x` 是 `torch.randn(1, 6, 16)`，把 `x` 的前兩個位置對調做成 `x2`，分別算輸出，確認 `out[0, 2:]` 與 `out2[0, 2:]`（第 2 個位置之後）**不**相同。再用沒有 RoPE 的版本做同樣的事，看結果是否相同，並用一句話解釋。
+
+**練習目標**：RoPE 讓模型分得出順序；沒有 RoPE 時 causal attention 對前面 token 的排列不敏感。
+
+**批改重點**：有 RoPE 時不同；沒有 RoPE 時位置 2 之後的輸出相同（它們看到的是同一組 key、value，只是順序不同）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import MultiHeadSelfAttention, RoPE
+
+torch.manual_seed(0)
+x = torch.randn(1, 6, 16)
+x2 = x.clone()
+x2[0, [0, 1]] = x[0, [1, 0]]
+for rope in [RoPE(4, 32), None]:
+    torch.manual_seed(1)
+    attn = MultiHeadSelfAttention(16, 4, rope=rope)
+    print(rope is not None, torch.allclose(attn(x)[0, 2:], attn(x2)[0, 2:], atol=1e-5))
+```
+
+### 第 13 集 pre-norm Transformer block — 狀態：可用
+
+**題目**
+
+用 `ModelConfig(d_model=16, n_heads=2, d_ff=32, context_length=8)` 建一個 `TransformerBlock`，餵 `torch.randn(1, 5, 16)`，確認輸出形狀。再用 `count_parameters` 和公式 \\( 4d^2 + 3d \cdot d_{ff} + 2d \\) 比對。
+
+**練習目標**：block 不改形狀；知道參數在哪。
+
+**批改重點**：1024 + 1536 + 32 = 2592。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.attention import RoPE
+from llmz.model import ModelConfig, TransformerBlock
+from llmz.utils import count_parameters
+
+torch.manual_seed(0)
+cfg = ModelConfig(d_model=16, n_heads=2, d_ff=32, context_length=8)
+block = TransformerBlock(cfg, RoPE(8, 8))
+print(block(torch.randn(1, 5, 16)).shape)
+print(count_parameters(block), 4 * 16 * 16 + 3 * 16 * 32 + 2 * 16)
+```
+
+### 第 14 集 完整 Transformer LM — 狀態：可用
+
+**題目**
+
+用 `ModelConfig(vocab_size=30, context_length=8, d_model=16, n_layers=1, n_heads=2, d_ff=32)` 建模型，隨機一段 `ids`（形狀 `(2, 8)`），照書上的方式切出 `inputs`、`targets`，算 cross-entropy，確認它接近 \\( \ln 30 \\)。
+
+**練習目標**：shift 一格；`reshape(-1, V)`；未訓練 loss ≈ ln V。
+
+**批改重點**：`inputs = ids[:, :-1]`、`targets = ids[:, 1:]`；loss 在 3.4 附近（ln 30 = 3.40）。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.functional import cross_entropy
+from llmz.model import ModelConfig, TransformerLM
+
+torch.manual_seed(0)
+model = TransformerLM(ModelConfig(vocab_size=30, context_length=8, d_model=16, n_layers=1, n_heads=2, d_ff=32))
+ids = torch.randint(0, 30, (2, 8))
+logits = model(ids[:, :-1])
+loss = cross_entropy(logits.reshape(-1, 30), ids[:, 1:].reshape(-1))
+print(round(loss.item(), 2), round(math.log(30), 2))
+```
+
+### 第 15 集 參數量與 FLOPs — 狀態：可用
+
+**題目**
+
+把標準設定的 `d_model` 改成 768、`n_layers` 改成 6、`d_ff` 改成 2048，其餘不變。用第 15 集的公式算參數量，再用 `count_parameters` 驗證；接著算 forward 每個 token 的 FLOPs 與 41M token 訓練的總 FLOPs。
+
+**練習目標**：把公式套到新設定上。
+
+**批改重點**：先列每層 \\( 4d^2 + 3d \cdot d_{ff} + 2d \\)，再加 embedding、lm_head、最後的 norm。
+
+**參考答案**
+
+```python
+from llmz.model import ModelConfig, TransformerLM
+from llmz.utils import count_parameters
+
+cfg = ModelConfig(d_model=768, n_layers=6, d_ff=2048)
+V, d, L, ff, T = cfg.vocab_size, cfg.d_model, cfg.n_layers, cfg.d_ff, cfg.context_length
+per_layer = 4 * d * d + 3 * d * ff + 2 * d
+total = V * d + L * per_layer + d + d * V
+print(total, count_parameters(TransformerLM(cfg)) == total)
+forward = L * (2 * 4 * d * d + 4 * T * d + 2 * 3 * d * ff) + 2 * d * V
+print(f"{forward / 1e6:.1f} MFLOPs/token, {3 * forward * 41_000_000 / 1e15:.1f} PFLOPs")
+```
