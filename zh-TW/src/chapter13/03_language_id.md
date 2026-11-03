@@ -235,6 +235,8 @@ M4 Max 上的輸出（每次相同）：
 **錯法二：沒有標籤的語言**。我們只認得 10 個語言，其他語言的頁面也會被硬塞進其中一個，因為分類器沒有「都不是」這個選項。用只有越南文與波蘭文才常用的字母當線索（占全頁字母 3% 以上就當作是那個語言）：
 
 ```python,norun
+from collections import Counter
+
 from llmz.pipeline import read_pages, train_langid
 
 MARKERS = {
@@ -253,8 +255,6 @@ for name, marker in MARKERS.items():
     lines = Counter(model.predict_lines(t) for t in rows)
     print(f"{name}：{len(rows)} 頁；整頁 {dict(whole.most_common(4))}；逐行投票 {dict(lines.most_common(4))}")
 ```
-
-（要先在檔案開頭補 `from collections import Counter`。）
 
 M4 Max 上的輸出（每次相同）：
 
