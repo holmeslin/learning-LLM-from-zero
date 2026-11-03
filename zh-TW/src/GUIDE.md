@@ -77,9 +77,10 @@
 | 附錄二 | CUDA 與 Triton 入門、CS336 A2／A3 對照 | `appendix2/` |
 | 第 12 章（第 1～3 集） | 評估：perplexity 的限制、benchmark 與 few-shot、loglikelihood 評多選題 | `chapter12/` |
 | 第 13 章（第 1～2 集） | 資料：Common Crawl 與 WARC、HTML 轉文字 | `chapter13/` |
+| 第 13 章（第 8～9 集） | 資料：exact dedup、MinHash + LSH | `chapter13/` |
 | 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 
-還沒寫：第 12 章第 4、5 集，第 13 章第 3 集以後，第 14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
+還沒寫：第 12 章第 4、5 集，第 13 章第 3～7 集與第 10 集以後，第 14 章，以及第 15 章第 4～7 集。各章預計內容見 `SUMMARY.md` 的標題。
 
 ---
 
@@ -199,7 +200,9 @@
 | 第 12 章第 1～3 集 | perplexity 是每個 token 的數字、bits per byte（總 \\( -\log p \\) ÷ byte 數 ÷ \\( \ln 2 \\)）、不同 tokenizer 與領域的 perplexity 不能比、greedy 文字的 perplexity 很低但單調（M4 Max 實測：標準模型 0.59 bits/byte）；benchmark（題目、提示格式、評分規則）、`llmz.evaluation`（`load_mcq`（`test` 100 題與 `dev` 5 題）、`build_prompt`、`sequence_logprob`（帶 mask、第 0 個 token 不算、沒有 `no_grad`）、`choice_logprobs`（題目與選項分開 encode、補齊成 batch）、`pick_choice`、`predict_mcq`、`mcq_accuracy`（`normalize` 為 `none`／`token`／`byte`））、`logp[batch, position, targets]` 三個索引張量 broadcasting、隨機猜測的標準差 \\( \sqrt{p(1-p)/n} \\)、zero-shot 與 few-shot、總和偏愛短選項而平均偏愛好猜的長選項、`math.comb`、`np.bincount`／`np.frombuffer`／`os.path.getsize`（只在第 1 集算 unigram 與 byte 數）；標準模型在 100 題上 81%／88%／86%（隨機 25%）、few-shot 對它沒有穩定的好處 |
 | 第 12 章第 4、5 集 | 尚未出版 |
 | 第 13 章第 1～2 集 | Common Crawl 的 crawl、WARC／WAT／WET 三種格式、用 HTTP Range 下載 WARC 檔的前 32 MiB、WARC 記錄的結構（版本行、標頭、空行、`Content-Length` 個 byte、結尾 `\r\n\r\n`）與四種 `WARC-Type`（`warcinfo`／`request`／`response`／`metadata`）、每筆記錄是獨立的一段 gzip（截斷時丟掉最後一筆）、`gzip.open`／`gzip.compress`／`EOFError`、`llmz.pipeline`（`Page`（`NamedTuple`）、`iter_warc_records`、`split_http_response`、`decode_html`（HTTP 標頭與 `<meta>` 的 charset、`CHARSET_ALIASES`、U+FFFD、BOM）、`html_to_text`（`SKIP_TAGS`、`BLOCK_TAGS`、`skip_tags` 參數）、`iter_pages`、`write_pages`／`read_pages`）、`html.parser.HTMLParser`（`handle_starttag`／`handle_endtag`／`handle_data`、`feed`／`close`）、`for ... else`、JSON Lines（`json.dumps(ensure_ascii=False)`）、`urllib.parse.urlsplit`、`tools/prepare_webtext.py` 與 `data/cc/pages.jsonl`；M4 Max 實測：前 32 MiB 有 2,579 筆記錄、859 筆 response（狀態碼全是 200）、842 頁 HTML、817 個主機；什麼都不丟 20,368,432 個字元、丟 script 與 style 等 4,919,873、再丟 nav 等 4,413,284；817 頁有文字，存成 6,345,494 bytes |
-| 第 13 章第 3 集以後與第 14 章 | 尚未出版 |
+| 第 13 章第 3～7 集 | 尚未出版 |
+| 第 13 章第 8～9 集 | 逐行 exact dedup（`llmz.pipeline` 的 `line_hash`（`hashlib.blake2b` 取 8 個 byte 的 64 bit 指紋；不用內建 `hash()`，因為字串的 `hash()` 每次啟動都不同）、`count_lines`（每一行出現在幾頁，同一頁重複只算一頁）、`dedup_lines`（拿掉出現在至少 `min_pages` 頁的行，每一份都拿掉，一行不剩的頁面整頁丟掉））、生日問題估計 64 bit 指紋的撞擊（預期撞擊對數 \\( \binom{n}{2}/2^{64} \\)）、Lee 等人 2022 的去重論文、T5 論文（Raffel 等人 2020）處理 C4 時以三個連續句子為單位只留一份；shingle（連續 5 個字的指紋集合，`shingles`）、Jaccard 相似度（`jaccard`）、MinHash 的原理（兩個集合在隨機排列下最小元素相同的機率等於 Jaccard、簽章每一格是一種排列下的最小值、估計的標準差 \\( \sqrt{J(1-J)/k} \\)）與 `minhash_signature`（排列用 \\( x \mapsto ax+b \\) mod \\( 2^{64} \\)、`uint64` 乘法溢位自動捨去、`np.random.default_rng`）、LSH（bands 與 rows、候選機率 \\( 1-(1-s^r)^b \\) 的 S 曲線、門檻約 \\( (1/b)^{1/r} \\)、`lsh_probability`、`lsh_candidates`、`itertools.combinations`）、`verify_pairs` 用精確 Jaccard 驗證候選對、`drop_near_duplicates`（近似重複只留排在最前面的一份）；M4 Max 實測：817 頁 108,198 行，`min_pages=5` 拿掉 9.6% 的行、1.2% 的字元（被拿掉的行 60% 不超過 3 個字元，頁首頁尾各 5 行只占 12%）；shingle 與簽章 0.5～0.6 秒；Jaccard >= 0.8 的有 37 對，`bands=16, rows=8` 的 51 個候選對全部找回，丟掉 15 頁，先做 `dedup_lines` 則剩 3 頁 |
+| 第 13 章第 10 集以後與第 14 章 | 尚未出版 |
 | 第 15 章第 1～3 集 | RL 的名詞（policy、reward、動作、平均獎勵 \\( J \\)）、多臂吃角子老虎機（bandit）、policy gradient \\( \nabla J = \mathbb{E}[R \nabla \log \pi(a)] \\)（log 導數技巧、softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`、抽樣估計的誤差約 \\( 1/\sqrt{n} \\)）、`llmz.rl`（`sample_actions`、`bandit_rewards`、`expected_reward`、`reinforce_loss`、`estimate_gradient`、`train_bandit`、`group_advantages`、`verifiable_rewards`、`train_groups`）、gradient ascent、REINFORCE（Williams 1992）與 baseline（不改變期望值、降低變異；批次平均把自己算進去所以縮小 \\( (n-1)/n \\)）、`torch.Generator().manual_seed`、GRPO 的組內平均 baseline 與除以標準差（樣本標準差、`eps`）、全組獎勵相同時 advantage 是 0、一組 \\( G \\) 個回答至少一個答對的機率 \\( 1-(1-p)^G \\)、玩具題 RLVR（3 個 prompt、答對機率 50%／10%／1%；除以標準差時困難題 400 步 0.96～0.98，不除只有 0.02～0.03） |
 | 第 15 章第 4 集以後 | 尚未出版 |
 
@@ -318,6 +321,8 @@
 | loglikelihood 評分、`sequence_logprob`、`choice_logprobs`、`pick_choice`、`mcq_accuracy`、長度正規化 | 第 12 章第 3 集 | 不評多選題 |
 | Common Crawl、WARC 記錄、`iter_warc_records`、`split_http_response`、`data/cc/sample.warc.gz` | 第 13 章第 1 集 | 只用 TinyStories，不談網頁資料 |
 | `decode_html`、`html.parser`、`html_to_text`、`iter_pages`、`data/cc/pages.jsonl` | 第 13 章第 2 集 | 不談網頁轉文字 |
+| 逐行 exact dedup、`line_hash`、`count_lines`、`dedup_lines`、`min_pages` | 第 13 章第 8 集 | 不談去重 |
+| shingle、Jaccard、MinHash、LSH、`shingles`、`minhash_signature`、`lsh_candidates`、`drop_near_duplicates` | 第 13 章第 9 集 | 只做逐行 exact dedup，不談近似重複 |
 | policy、reward、bandit、policy gradient、`reinforce_loss`、`estimate_gradient` | 第 15 章第 1 集 | 只說「用獎勵訓練模型」，不談梯度怎麼來 |
 | REINFORCE、`train_bandit`、baseline 與變異 | 第 15 章第 2 集 | 不談 baseline |
 | GRPO、`group_advantages`、`verifiable_rewards`、`train_groups`、是否除以標準差 | 第 15 章第 3 集 | 只說 advantage 是獎勵減 baseline |

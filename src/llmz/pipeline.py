@@ -6,10 +6,15 @@
 import gzip
 import json
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator
+from hashlib import blake2b
 from html.parser import HTMLParser
+from itertools import combinations
 from pathlib import Path
 from typing import NamedTuple
+
+import numpy as np
 
 
 class Page(NamedTuple):
@@ -161,3 +166,113 @@ def read_pages(path: str | Path) -> Iterator[Page]:
         for line in f:
             yield Page(**json.loads(line))
 # ANCHOR_END: write_pages
+
+
+# ANCHOR: line_hash
+def line_hash(line: str) -> int:
+    """一行文字的 64 bit 指紋。不用內建的 hash()：字串的 hash() 每次啟動 Python 都不一樣，存下來或跨程序比對都不行。"""
+    return int.from_bytes(blake2b(line.encode(), digest_size=8).digest())
+# ANCHOR_END: line_hash
+
+
+# ANCHOR: dedup_lines
+def count_lines(pages: Iterable[Page]) -> Counter[int]:
+    """每一行（用指紋代表）出現在幾頁裡；同一頁重複的行只算一頁。
+
+    shortcut: 計數表整個放在記憶體；十億行以上要依指紋分成很多份，一份一份數。
+    """
+    return Counter(h for page in pages for h in {line_hash(line) for line in page.text.split("\n")})
+
+
+def dedup_lines(pages: list[Page], min_pages: int = 5) -> list[Page]:
+    """拿掉出現在至少 min_pages 頁的行（每一份都拿掉），再丟掉一行都不剩的頁面。空行也一起丟。"""
+    counts = count_lines(pages)
+    kept = []
+    for page in pages:
+        lines = [line for line in page.text.split("\n") if line and counts[line_hash(line)] < min_pages]
+        if lines:
+            kept.append(Page(page.url, "\n".join(lines)))
+    return kept
+# ANCHOR_END: dedup_lines
+
+
+# ANCHOR: shingles
+def shingles(text: str, n: int = 5) -> np.ndarray:
+    """文件變成「連續 n 個字」的集合（shingle），每個 shingle 用 64 bit 指紋代表。比 n 個字還短的文件，整段當一個 shingle。
+
+    shortcut: 用空白分字，不寫空白的語言（日文、沒有空格的中文）會分得很粗；要改成字元 n-gram 時，把 words 換成字元的串列。
+    """
+    words = text.lower().split()
+    grams = {" ".join(words[i : i + n]) for i in range(max(1, len(words) - n + 1))} if words else set()
+    return np.array([line_hash(gram) for gram in grams], dtype=np.uint64)
+
+
+def jaccard(x: np.ndarray, y: np.ndarray) -> float:
+    """兩個集合（元素不重複的陣列）的 Jaccard 相似度：交集大小 / 聯集大小。兩個都是空集合時回傳 0。"""
+    shared = np.intersect1d(x, y, assume_unique=True).size
+    return shared / max(1, x.size + y.size - shared)
+# ANCHOR_END: shingles
+
+
+# ANCHOR: minhash_signature
+def minhash_signature(hashes: np.ndarray, num_perm: int = 128, seed: int = 0) -> np.ndarray:
+    """集合變成 num_perm 個數字：第 i 個是「第 i 種隨機排列下，集合裡最小的那個元素」。
+
+    排列用 x -> a*x + b（mod 2^64，uint64 乘法溢位時自動捨去高位），a 是奇數，所以是一一對應。
+    兩個集合的簽章在某一格相同的機率，就是它們的 Jaccard 相似度。
+    shortcut: 一次算出 (num_perm, 集合大小) 的整個矩陣；一份文件有幾十萬個 shingle 時要切塊。
+    """
+    rng = np.random.default_rng(seed)
+    a = rng.integers(0, 2**64, num_perm, dtype=np.uint64) | np.uint64(1)
+    b = rng.integers(0, 2**64, num_perm, dtype=np.uint64)
+    return (hashes[None, :] * a[:, None] + b[:, None]).min(axis=1, initial=np.iinfo(np.uint64).max)  # 空集合：全是最大值
+# ANCHOR_END: minhash_signature
+
+
+# ANCHOR: lsh_probability
+def lsh_probability(similarity: float, bands: int, rows: int) -> float:
+    """相似度為 similarity 的兩份文件，在「bands 段、每段 rows 格」的設定下成為候選對的機率：至少有一段整段相同。"""
+    return 1 - (1 - similarity**rows) ** bands
+# ANCHOR_END: lsh_probability
+
+
+# ANCHOR: lsh_candidates
+def lsh_candidates(signatures: np.ndarray, bands: int, rows: int) -> set[tuple[int, int]]:
+    """簽章矩陣 (文件數, bands * rows)。把每一列切成 bands 段，某一段整段相同的文件放進同一個桶，同桶的兩兩配對就是候選對 (i, j)，i < j。
+
+    shortcut: 同一桶有 m 份文件就產生 m(m-1)/2 對（例如幾百份一模一樣的頁面，或全部是空的文件）；桶很大時要改成只跟桶裡的代表比。
+    """
+    if signatures.shape[1] != bands * rows:
+        raise ValueError(f"簽章有 {signatures.shape[1]} 格，但 bands * rows = {bands * rows}")
+    pairs = set()
+    for band in range(bands):
+        buckets: dict[bytes, list[int]] = {}
+        for doc, part in enumerate(signatures[:, band * rows : (band + 1) * rows]):
+            buckets.setdefault(part.tobytes(), []).append(doc)
+        for docs in buckets.values():
+            pairs.update(combinations(docs, 2))
+    return pairs
+# ANCHOR_END: lsh_candidates
+
+
+# ANCHOR: verify_pairs
+def verify_pairs(pairs: Iterable[tuple[int, int]], sets: list[np.ndarray], threshold: float) -> list[tuple[int, int, float]]:
+    """候選對只是「可能相似」，逐對算精確的 Jaccard，留下 >= threshold 的，回傳 (i, j, Jaccard)。"""
+    scored = ((i, j, jaccard(sets[i], sets[j])) for i, j in pairs)
+    return [(i, j, similarity) for i, j, similarity in scored if similarity >= threshold]
+# ANCHOR_END: verify_pairs
+
+
+# ANCHOR: drop_near_duplicates
+def drop_near_duplicates(pages: list[Page], threshold: float = 0.8, bands: int = 16, rows: int = 8) -> list[Page]:
+    """近似重複的頁面只留排在最前面的那一份。「近似」是 shingle 集合的 Jaccard 相似度 >= threshold。"""
+    if not pages:
+        return []
+    sets = [shingles(page.text) for page in pages]
+    signatures = np.stack([minhash_signature(s, bands * rows) for s in sets])
+    dropped = set()
+    for i, j, _ in verify_pairs(sorted(lsh_candidates(signatures, bands, rows)), sets, threshold):
+        if i not in dropped:  # i 自己已經被丟掉的話，它就不能當 j 的代表；(i, j) 依 i 由小到大處理，所以 i 的狀態此時已經定案
+            dropped.add(j)
+    return [page for k, page in enumerate(pages) if k not in dropped]
+# ANCHOR_END: drop_near_duplicates

@@ -2699,6 +2699,82 @@ for tag in ["select", "nav", "footer", "aside"]:
     print(f"{tag}：多丟 {before - after:,} 個字元")
 ```
 
+### 第 8 集 exact dedup — 狀態：可用
+
+**題目**
+
+`dedup_lines` 把出現在至少 `min_pages` 頁的行，每一份都拿掉。改成「每一行只保留在它第一次出現的那一頁，後面的頁面都拿掉」（同一頁自己重複的行不動），寫出 `dedup_lines_keep_first(pages)`。先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/pages.jsonl`，比較它與 `dedup_lines(pages, 2)` 拿掉的行數、字元數與整頁丟掉的頁數，並看那 6 份一模一樣的頁面各留下幾份。
+
+**練習目標**：「出現在很多頁就整個拿掉」與「重複的只留一份」是兩種不同的去重：前者適合每頁共用的框架，後者保留內容。
+
+**批改重點**：`dedup_lines(pages, 2)` 拿掉 23,040 行（21.3%）、216,680 個字元（4.9%），整頁丟掉 10 頁，6 份一模一樣的頁面一份都不剩；`dedup_lines_keep_first` 拿掉 16,189 行（15.0%）、133,798 個字元（3.0%），整頁丟掉 8 頁，6 份一模一樣的頁面留下 1 份（第一份）。提示：邊掃邊記 `seen`（出現過的行的集合）。常見錯誤：每讀一行就更新 `seen`，結果同一頁自己重複的行被當成「前面出現過」而拿掉；要處理完這一頁才把這一頁的行加進 `seen`。
+
+**參考答案**
+
+```python,norun
+from collections import Counter
+
+from llmz.pipeline import Page, dedup_lines, read_pages
+
+
+def dedup_lines_keep_first(pages):
+    """每一行只留在它第一次出現的那一頁；同一頁自己重複的行不動。"""
+    seen, kept = set(), []
+    for page in pages:
+        lines = page.text.split("\n")
+        fresh = [line for line in lines if line and line not in seen]  # 前面的頁面都沒出現過的行
+        seen.update(lines)  # 這一頁處理完才更新
+        if fresh:
+            kept.append(Page(page.url, "\n".join(fresh)))
+    return kept
+
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+n_lines = sum(len(p.text.split("\n")) for p in pages)
+n_chars = sum(len(p.text) for p in pages)
+for name, kept in [("dedup_lines(min_pages=2)", dedup_lines(pages, 2)), ("dedup_lines_keep_first", dedup_lines_keep_first(pages))]:
+    kept_lines = sum(len(p.text.split("\n")) for p in kept)
+    kept_chars = sum(len(p.text) for p in kept)
+    print(
+        f"{name}：拿掉 {n_lines - kept_lines:,} 行（{1 - kept_lines / n_lines:.1%}）、{n_chars - kept_chars:,} 個字元"
+        f"（{1 - kept_chars / n_chars:.1%}），整頁丟掉 {len(pages) - len(kept)} 頁"
+    )
+
+same_text = Counter(p.text for p in pages)
+copies = {p.url for p in pages if same_text[p.text] == 6}  # 那 6 份一模一樣的頁面
+for name, kept in [("min_pages=2", dedup_lines(pages, 2)), ("keep_first", dedup_lines_keep_first(pages))]:
+    print(f"{name}：6 份一模一樣的頁面留下 {sum(p.url in copies for p in kept)} 份")
+```
+
+### 第 9 集 MinHash + LSH — 狀態：可用
+
+**題目**
+
+簽章有 128 格時，\\( b \times r = 128 \\) 的組合只有 8 種。用 `lsh_probability` 印出每一種組合在 \\( J = 0.8 \\) 與 \\( J = 0.5 \\) 的候選機率：有沒有一種同時讓 \\( J = 0.8 \\) 的機率 >= 0.99、\\( J = 0.5 \\) 的機率 <= 0.1？如果簽章可以更長（\\( b \times r \le 512 \\)，\\( b, r \\) 不必是 128 的因數），符合條件的最短簽章是幾格？代價是什麼？
+
+**練習目標**：S 曲線的位置由 \\( b, r \\) 的比例決定，陡不陡由 \\( b \times r \\) 的大小決定；要又陡又在對的位置，只能加長簽章。
+
+**批改重點**：128 格裡沒有任何一組符合：\\( b=16, r=8 \\) 是 0.947 與 0.061，\\( J = 0.8 \\) 差一點；\\( b=32, r=4 \\) 是 1.000 與 0.873，\\( J = 0.5 \\) 太高。\\( b \times r \le 512 \\) 裡最短的是 \\( b=26, r=8 \\)，208 格（0.992 與 0.097）。代價：簽章是 128 格的 1.6 倍長（記憶體 1.6 倍：每份文件 1.6 KiB），`minhash_signature` 的時間也大約是 1.6 倍。提示：兩層迴圈枚舉 \\( b, r \\)，條件寫成函式。
+
+**參考答案**
+
+```python
+from llmz.pipeline import lsh_probability
+
+
+def ok(bands, rows):
+    return lsh_probability(0.8, bands, rows) >= 0.99 and lsh_probability(0.5, bands, rows) <= 0.1
+
+
+for bands in [1, 2, 4, 8, 16, 32, 64, 128]:
+    rows = 128 // bands
+    p80, p50 = lsh_probability(0.8, bands, rows), lsh_probability(0.5, bands, rows)
+    print(f"128 格：b={bands:3d} r={rows:3d}：P(0.8)={p80:.3f}  P(0.5)={p50:.3f}  {'符合' if ok(bands, rows) else ''}")
+
+size, bands, rows = min((b * r, b, r) for b in range(1, 513) for r in range(1, 513) if b * r <= 512 and ok(b, r))
+print(f"最短的簽章：b={bands}, r={rows}，{size} 格；P(0.8)={lsh_probability(0.8, bands, rows):.3f}，P(0.5)={lsh_probability(0.5, bands, rows):.3f}")
+```
+
 ## 第 15 章 後訓練：RL 與可驗證獎勵
 
 ### 第 1 集 policy gradient 直覺 — 狀態：可用
