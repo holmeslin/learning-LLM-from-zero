@@ -1,9 +1,11 @@
-"""資料檔處理（第 3 章第 14 集起）：下載、轉成 token 檔、讀回來。"""
+"""資料檔處理（第 3 章第 14 集起）：下載、轉成 token 檔、讀回來、隨機取 batch。"""
 
 import array
 import urllib.request
 
 import numpy as np
+import torch
+from torch import Tensor
 
 from llmz.tokenizer import Tokenizer
 
@@ -57,3 +59,13 @@ def load_tokens(path: str) -> np.memmap:
     """用 memmap 打開 token 檔：像陣列一樣索引，但不會整個讀進記憶體。"""
     return np.memmap(path, dtype=np.uint16, mode="r")
 # ANCHOR_END: load_tokens
+
+
+# ANCHOR: get_batch
+def get_batch(data: np.ndarray, batch_size: int, context_length: int, device: torch.device) -> tuple[Tensor, Tensor]:
+    """從 token 檔隨機切 batch_size 段，每段 context_length 個 token；targets 是 inputs 往後移一格。"""
+    starts = torch.randint(0, len(data) - context_length, (batch_size,))
+    chunks = np.stack([data[i : i + context_length + 1] for i in starts.tolist()])  # (B, T+1)
+    chunks = torch.from_numpy(chunks.astype(np.int64))
+    return chunks[:, :-1].to(device), chunks[:, 1:].to(device)
+# ANCHOR_END: get_batch

@@ -1252,3 +1252,446 @@ print(total, count_parameters(TransformerLM(cfg)) == total)
 forward = L * (2 * 4 * d * d + 4 * T * d + 2 * 3 * d * ff) + 2 * d * V
 print(f"{forward / 1e6:.1f} MFLOPs/token, {3 * forward * 41_000_000 / 1e15:.1f} PFLOPs")
 ```
+
+---
+
+## 第 5 章 訓練
+
+### 第 1 集 cross-entropy loss 實作 — 狀態：可用
+
+**題目**
+
+`ids = torch.tensor([[1, 2, 3, 4, 5]])`，手動切出 `inputs`、`targets`，用 `torch.zeros(1, 4, 8)` 當 logits（八個 token 全部同分）算 `cross_entropy`，確認結果是 \\( \ln 8 \\)。
+
+**練習目標**：對齊與攤平；同分的 loss 是 ln V。
+
+**批改重點**：`reshape(-1, 8)` 與 `reshape(-1)`；答案 2.0794。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.functional import cross_entropy
+
+ids = torch.tensor([[1, 2, 3, 4, 5]])
+inputs, targets = ids[:, :-1], ids[:, 1:]
+logits = torch.zeros(1, 4, 8)
+print(cross_entropy(logits.reshape(-1, 8), targets.reshape(-1)), math.log(8))
+```
+
+### 第 2 集 從頭寫 SGD — 狀態：可用
+
+**題目**
+
+用 `llmz.optim.SGD` 重做第 2 章第 5 集的線性回歸（300 步、lr 0.5），確認最後的 `w`、`b` 和第 2 章一樣。然後印出 `opt.state_dict()["param_groups"]`，看裡面有什麼。
+
+**練習目標**：基底類別版本的用法與第 2 章一致；認識 `state_dict` 的內容。
+
+**批改重點**：`w` 2.931、`b` 2.033。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import SGD
+
+
+class LinearModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w = nn.Parameter(torch.tensor(0.0))
+        self.b = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, x):
+        return self.w * x + self.b
+
+
+torch.manual_seed(0)
+x = torch.rand(100)
+y = 3 * x + 2 + 0.1 * torch.randn(100)
+model = LinearModel()
+opt = SGD(model.parameters(), lr=0.5)
+for _ in range(300):
+    loss = ((model(x) - y) ** 2).mean()
+    loss.backward()
+    opt.step()
+    opt.zero_grad()
+print(round(model.w.item(), 3), round(model.b.item(), 3))
+print(opt.state_dict()["param_groups"])
+```
+
+### 第 3 集 AdamW — 狀態：可用
+
+**題目**
+
+一個參數 `p = nn.Parameter(torch.tensor([1.0]))`，手動設 `p.grad = torch.tensor([0.5])`，用 `AdamW([p], lr=0.1, weight_decay=0.0)` 做一步。先手算第一步：\\( m = 0.1 \times 0.5 = 0.05 \\)、\\( v = 0.05 \times 0.25 = 0.0125 \\)、\\( m/\sqrt{v} = 0.447 \\)、修正係數 \\( \sqrt{1-0.95}/(1-0.9) = 2.236 \\)，所以更新量是 \\( 0.1 \times 2.236 \times 0.447 = 0.1 \\)，`p` 應該變成 0.9。再執行確認，並印出 `opt.state[p]`。
+
+**練習目標**：把 AdamW 的公式手算一次；發現第一步的更新量剛好是 lr（不管梯度多大）。
+
+**批改重點**：`p` 變成 0.9；`state` 裡 `t` 是 1、`m` 是 0.05、`v` 是 0.0125。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import AdamW
+
+p = nn.Parameter(torch.tensor([1.0]))
+opt = AdamW([p], lr=0.1, weight_decay=0.0)
+p.grad = torch.tensor([0.5])
+opt.step()
+print(p, opt.state[p])
+```
+
+### 第 4 集 warmup + cosine 學習率排程 — 狀態：可用
+
+**題目**
+
+用 `lr_cosine_schedule`，設定 `lr_max=0.01`、`lr_min=0.001`、warmup 10 步、cosine 100 步，印出第 0、5、10、55、100、200 步的學習率，並說明第 55 步為什麼是 0.0055。
+
+**練習目標**：三段的形狀。
+
+**批改重點**：第 55 步是 cosine 的中點，\\( \cos(\pi/2) = 0 \\)，所以是兩端的平均。
+
+**參考答案**
+
+```python
+from llmz.optim import lr_cosine_schedule
+
+for s in [0, 5, 10, 55, 100, 200]:
+    print(s, round(lr_cosine_schedule(s, 0.01, 0.001, 10, 100), 5))
+```
+
+### 第 5 集 梯度裁剪 — 狀態：可用
+
+**題目**
+
+兩個參數的梯度分別是 `[1.0, 1.0]` 與 `[1.0, 1.0]`，`max_norm` 設 1.0，先手算裁剪後每個元素是多少，再用 `clip_grad_norm_` 驗證。接著把 `max_norm` 改成 5.0，確認梯度沒被動。
+
+**練習目標**：整體長度、等比例縮小、不超過就不動。
+
+**批改重點**：長度 2，每個元素變 0.5；`max_norm` 5 時不變。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import clip_grad_norm_
+
+a, b = nn.Parameter(torch.zeros(2)), nn.Parameter(torch.zeros(2))
+a.grad, b.grad = torch.ones(2), torch.ones(2)
+print(clip_grad_norm_([a, b], 1.0), a.grad, b.grad)
+a.grad, b.grad = torch.ones(2), torch.ones(2)
+print(clip_grad_norm_([a, b], 5.0), a.grad)
+```
+
+### 第 6 集 資料載入：隨機取 batch — 狀態：可用
+
+**題目**
+
+用 `np.arange(100, dtype=np.uint16)` 當資料，種子 0，`get_batch(batch_size=2, context_length=4)`，印出 `x`、`y`。再把 `context_length` 改成 99，觀察 `torch.randint` 的上限變成多少、會不會出錯。
+
+**練習目標**：起點範圍與 `+1` 的關係。
+
+**批改重點**：`context_length=99` 時起點只能是 0，`len(data) - context_length` 是 1，`randint(0, 1)` 永遠 0，不會出錯；100 才會出錯。
+
+**參考答案**
+
+```python
+import numpy as np
+import torch
+
+from llmz.data import get_batch
+
+data = np.arange(100, dtype=np.uint16)
+torch.manual_seed(0)
+x, y = get_batch(data, 2, 4, torch.device("cpu"))
+print(x, y, sep="\n")
+x, y = get_batch(data, 2, 99, torch.device("cpu"))
+print(x[:, :3], y[:, -3:])
+```
+
+### 第 7 集 checkpoint — 狀態：可用
+
+**題目**
+
+用第 7 集的小模型存一個 checkpoint（步數 5），然後只載入模型、不傳優化器（`load_checkpoint(path, model2)`），確認回傳的步數還是 5、模型輸出一致，而新的優化器 `state` 是空的。
+
+**練習目標**：`optimizer=None` 的用法；知道只載模型時優化器從零開始。
+
+**批改重點**：`len(opt2.state) == 0`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.optim import AdamW
+from llmz.train import load_checkpoint, save_checkpoint
+
+cfg = ModelConfig(vocab_size=50, context_length=16, d_model=32, n_layers=1, n_heads=4, d_ff=64)
+torch.manual_seed(0)
+model = TransformerLM(cfg)
+opt = AdamW(model.parameters())
+save_checkpoint(model, opt, 5, "c.pt")
+model2 = TransformerLM(cfg)
+opt2 = AdamW(model2.parameters())
+x = torch.randint(0, 50, (1, 6))
+print(load_checkpoint("c.pt", model2), torch.allclose(model(x), model2(x)), len(opt2.state))
+```
+
+### 第 8 集 組裝訓練迴圈與 JSONL log — 狀態：可用
+
+**題目**
+
+把第 8 集的 smoke 設定改成 `max_steps=30`、`checkpoint_every=15`，跑一次 `train(cfg)`；再用**同一個** `cfg` 但 `max_steps=45` 跑第二次，觀察第二次是不是從第 30 步接續（看印出來的第一筆紀錄的 `step`）。
+
+**練習目標**：`latest.pt` 自動接續。
+
+**批改重點**：第二次印出的第一筆是 step 40 或 45（看 `log_every`），不是從 10 開始；`log.jsonl` 會累積兩次的紀錄。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.model import ModelConfig
+from llmz.train import TrainConfig, train
+
+tokens = (np.arange(20000) % 64).astype(np.uint16)
+tokens.tofile("train.bin")
+tokens.tofile("valid.bin")
+small = ModelConfig(vocab_size=64, context_length=16, d_model=32, n_layers=2, n_heads=4, d_ff=64)
+base = dict(train_path="train.bin", valid_path="valid.bin", out_dir="smoke", model=small, batch_size=8,
+            warmup_steps=5, lr_max=3e-3, log_every=15, eval_every=1000, eval_batches=1, checkpoint_every=15, device="cpu")
+train(TrainConfig(max_steps=30, **base))
+records = train(TrainConfig(max_steps=45, **base))
+print([r["step"] for r in records])
+```
+
+### 第 9 集 MPS 注意事項 — 狀態：不出題
+
+這集是實測數字與說明。讀者想知道自己機器的速度，請他跑 `uv run tools/train.py --out_dir runs/speed --max_steps 50 --log_every 10`（有 MPS 自動用 MPS），看 log 裡 `time` 欄位每 10 步差多少秒。
+
+### 第 10 集 第一次完整訓練 TinyStories — 狀態：不出題
+
+這集是跑 `uv run tools/train.py --out_dir runs/base --compile`，幾十分鐘。讀者的 loss 曲線應該和書上接近（最後驗證 loss 差 0.05 以內都正常）。跑不動（記憶體不足）時建議 `--batch_size 16 --max_steps 10000`，token 總量相同。
+
+### 第 11 集 畫 loss 曲線 — 狀態：可用
+
+**題目**
+
+自己造一個 `log.jsonl`（五行，`step` 與 `loss` 遞減），寫一支程式讀它、用 matplotlib 畫成 `my_loss.png`。不要用 `tools/plot_loss.py`，自己寫 `json.loads` 與 `plt.plot`。
+
+**練習目標**：JSONL 的讀法、最基本的 matplotlib。
+
+**批改重點**：逐行 `json.loads`；`plt.savefig` 之前不需要 `plt.show()`。
+
+**參考答案**
+
+```python
+import json
+
+import matplotlib.pyplot as plt
+
+with open("log.jsonl", "w") as f:
+    for step, loss in [(100, 5.0), (200, 3.2), (300, 2.5), (400, 2.1), (500, 1.9)]:
+        f.write(json.dumps({"step": step, "loss": loss}) + "\n")
+records = [json.loads(line) for line in open("log.jsonl")]
+plt.plot([r["step"] for r in records], [r["loss"] for r in records], marker="o")
+plt.xlabel("step")
+plt.ylabel("loss")
+plt.savefig("my_loss.png")
+print("saved")
+```
+
+---
+
+## 第 6 章 生成與實驗
+
+### 第 1 集 greedy decoding — 狀態：可用
+
+**題目**
+
+照第 1 集的方式訓練會數數的小模型（150 步），然後從 `[60, 61, 62]` 開始 greedy 生成 6 個 token，看它會不會在 63 之後繞回 0。
+
+**練習目標**：生成迴圈的四個步驟；`[0, -1]` 取最後位置。
+
+**批改重點**：結果應是 `[60, 61, 62, 63, 0, 1, 2, 3, 4]`；餵模型時用 `ids[-16:]`。
+
+**參考答案**
+
+```python
+import numpy as np
+import torch
+
+from llmz.generate import greedy_next
+from llmz.model import ModelConfig, TransformerLM
+from llmz.train import TrainConfig, train
+
+tokens = (np.arange(20000) % 64).astype(np.uint16)
+tokens.tofile("train.bin")
+tokens.tofile("valid.bin")
+cfg = TrainConfig(train_path="train.bin", valid_path="valid.bin", out_dir="smoke",
+                  model=ModelConfig(vocab_size=64, context_length=16, d_model=32, n_layers=2, n_heads=4, d_ff=64),
+                  batch_size=8, max_steps=150, warmup_steps=5, lr_max=3e-3, log_every=1000, eval_every=1000, checkpoint_every=1000, device="cpu")
+train(cfg)
+model = TransformerLM(cfg.model)
+model.load_state_dict(torch.load("smoke/model.pt"))
+model.eval()
+ids = [60, 61, 62]
+with torch.no_grad():
+    for _ in range(6):
+        ids.append(greedy_next(model(torch.tensor([ids[-16:]]))[0, -1]).item())
+print(ids)
+```
+
+### 第 2 集 temperature — 狀態：可用
+
+**題目**
+
+logits `[1.0, 1.0, 1.0, 5.0]`。用 `llmz.functional.softmax` 印出溫度 0.5、1、2 時的機率；再用 `sample_next` 各抽 100 次（種子 0），數 token 3 被抽到幾次。
+
+**練習目標**：溫度對分布的影響；抽樣次數和機率對得上。
+
+**批改重點**：溫度越高 token 3 的次數越少；溫度 0.5 時幾乎 100 次。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+from llmz.generate import sample_next
+
+logits = torch.tensor([1.0, 1.0, 1.0, 5.0])
+torch.manual_seed(0)
+for t in [0.5, 1.0, 2.0]:
+    n = sum(sample_next(logits, temperature=t).item() == 3 for _ in range(100))
+    print(t, softmax(logits / t), n)
+```
+
+### 第 3 集 top-p 取樣 — 狀態：可用
+
+**題目**
+
+logits `[2.0, 1.0, 0.0, -1.0, -2.0]`。先算 softmax 的累積機率，手動判斷 `top_p=0.8` 會留下幾個 token，再用 `sample_next` 抽 200 次驗證只出現那些索引。
+
+**練習目標**：「累積減自己 < p」的規則。
+
+**批改重點**：機率約 `[0.64, 0.23, 0.09, 0.03, 0.01]`，累積 `[0.64, 0.87, ...]`；p=0.8 留前兩個。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+from llmz.generate import sample_next
+
+logits = torch.tensor([2.0, 1.0, 0.0, -1.0, -2.0])
+print(torch.cumsum(softmax(logits), dim=-1))
+torch.manual_seed(0)
+print(sorted(set(sample_next(logits, top_p=0.8).item() for _ in range(200))))
+```
+
+### 第 4 集 完整生成函式 — 狀態：可用
+
+**題目**
+
+載入 `runs/base/model.pt`（需要先跑完第 5 章第 10 集），用同一個開頭 `"One day, a little bird"`、同一個種子，分別用 `temperature=0`、`temperature=1.0`、`temperature=0.8, top_p=0.9` 各生成 80 個 token，比較三段文字的通順度與重複程度。沒有訓練好的模型時，改用第 1 集的數數模型，確認 `generate` 能跑（會輸出亂碼是正常的，因為 tokenizer 不對）。
+
+**練習目標**：`generate` 的用法；三種取樣設定的差別。
+
+**批改重點**：greedy 的那段會出現重複句型；這題沒有標準輸出。
+
+**參考答案**（需要 `runs/base/model.pt` 與 `data/tokenizer.json`，不會被自動驗證）
+
+```python,ignore
+import torch
+
+from llmz.device import get_device
+from llmz.generate import generate
+from llmz.model import ModelConfig, TransformerLM
+from llmz.tokenizer import Tokenizer
+
+device = get_device()
+model = TransformerLM(ModelConfig()).to(device)
+model.load_state_dict(torch.load("runs/base/model.pt", map_location=device))
+model.eval()
+tok = Tokenizer.load("data/tokenizer.json")
+for kw in [dict(temperature=0), dict(temperature=1.0), dict(temperature=0.8, top_p=0.9)]:
+    torch.manual_seed(0)
+    print(kw, generate(model, tok, "One day, a little bird", max_new_tokens=80, **kw), sep="\n")
+```
+
+### 第 5～10 集 消融與掃描實驗 — 狀態：不出題
+
+這幾集是跑 `tools/train.py` 的實驗，每個五分鐘以上，不適合當練習題。讀者想動手時，建議他挑一個書上沒做的變化（例如 `--n_layers 2` 或 `--d_model 256`）用同樣的 1000 步設定跑一次，和 `runs/base_1k` 比曲線，並提醒：一次只改一個東西、用 `tools/plot_loss.py` 把兩個 run 畫在同一張圖。
+
+---
+
+## 附錄一
+
+### a MLX — 狀態：不出題
+
+概念介紹，本書環境沒有裝 `mlx`。
+
+### b `einops` 速查 — 狀態：可用
+
+**題目**
+
+把第 4 章第 11 集 `MultiHeadSelfAttention.forward` 裡的兩個 reshape／transpose（拆 head 與接回去）用 `rearrange` 改寫，對一個 `torch.randn(2, 5, 16)`（4 個 head）驗證結果與原本的寫法相同。
+
+**練習目標**：`rearrange` 的字串對應到 reshape 與 transpose。
+
+**批改重點**：`"b t (h d) -> b h t d"` 與 `"b h t d -> b t (h d)"`。
+
+**參考答案**
+
+```python
+import torch
+from einops import rearrange
+
+torch.manual_seed(0)
+x = torch.randn(2, 5, 16)
+a = x.reshape(2, 5, 4, 4).transpose(1, 2)
+b = rearrange(x, "b t (h d) -> b h t d", h=4)
+print(torch.equal(a, b), torch.equal(rearrange(b, "b h t d -> b t (h d)"), x))
+```
+
+### c 常見錯誤 — 狀態：可用
+
+**題目**
+
+下面三段程式各會出什麼錯？先不要執行，寫下你猜的錯誤類型（形狀／device／dtype／autograd），再執行對答案。
+
+```python,ignore
+torch.ones(2, 3) + torch.ones(3, 2)
+torch.arange(5).mean()
+torch.ones(2, requires_grad=True).backward()
+```
+
+**練習目標**：看到訊息能分類。
+
+**批改重點**：形狀（`size of tensor a (3) must match`）、dtype（`mean(): could not infer output dtype`）、autograd（`grad can be implicitly created only for scalar outputs`）。
+
+**參考答案**：執行每一行各自觀察即可，沒有固定程式。
+
+### d 對照 CS336 A1 — 狀態：不出題
+
+純對照表。
+
+### e 雲端 GPU 租用 — 狀態：不出題
+
+流程說明，無法在本機練習。
