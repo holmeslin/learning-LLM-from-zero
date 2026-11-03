@@ -252,7 +252,7 @@ SFT 的結果是類似的：第 14 章把 SFT 的訓練量加到 20 倍，`color
 uv run tools/sft.py --out_dir runs/sft_short --max_steps 100
 ```
 
-6.5 秒的訓練迴圈。這個模型已經學到格式，`count` 是全對（192／192），但加法與減法還沒學好：1000 題裡 `add` 62／188、`subtract` 53／200。SFT 學得多一點（200 步）時這兩種會升到 150／188 與 83／200，到 1000 步全對：能力是練得出來的，只是這個模型還沒練到。用 RLVR 練 `add` 與 `subtract`：
+6.5 秒的訓練迴圈。這個模型已經學到格式，`count` 是全對（192／192），但加法與減法還沒學好：1000 題裡 `add` 62／188、`subtract` 53／200。SFT 學得多一點（`--max_steps 200`）時這兩種會升到 150／188 與 83／200，到 1000 步全對：能力是練得出來的，只是這個模型還沒練到。用 RLVR 練 `add` 與 `subtract`：
 
 ```bash
 uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --lr 1e-5 --out_dir runs/rlvr_short
