@@ -71,7 +71,9 @@ print(linear.weight.dtype, y.dtype, z.dtype)
 torch.float32 torch.bfloat16 torch.float32
 ```
 
-參數還是 float32，`@` 的輸出變成 bfloat16，加法沒被改。第 4 章的 `RMSNorm` 一開始就先 `x.float()` 再算平方和，就是為了這種情況。
+參數還是 float32，`@` 的輸出變成 bfloat16，`x + 1` 的輸入是 float32，所以結果也是 float32。
+
+要注意：autocast 只認得 PyTorch 內建的運算，例如它會讓 `torch.softmax` 用 float32 算。我們自己寫的 softmax、RMSNorm 由 `torch.exp`、`sum` 這些基本運算組成，輸入是 bfloat16，它們就照 bfloat16 算。所以第 4 章的 `RMSNorm` 一開始先 `x.float()` 再算平方和；attention 裡我們自己的 softmax 沒有這樣做，下面實測時是用 bfloat16 算的，loss 仍然和 float32 一樣。
 
 訓練迴圈裡只要把 forward 和 loss 包進去，backward 放在外面：
 
