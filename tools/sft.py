@@ -1,8 +1,9 @@
-"""第 14 章第 3 集：從標準模型開始 SFT。例：
+"""第 14 章第 3 集：從標準模型（runs/base/model.pt）開始 SFT，存成 runs/sft/model.pt。例：
 
-    uv run tools/sft.py                                   # 標準設定，存到 runs/sft（M4 Max 上幾分鐘）
+    uv run tools/sft.py                                   # 標準設定（M4 Max 上約 1 分鐘）
     uv run tools/sft.py --out_dir runs/sft_nomask --no-mask   # 整串都算 loss 的對照
-    uv run tools/sft.py --base_path "" --d_model 64 --n_layers 2 --n_heads 4 --d_ff 128 --vocab_size 10000 --max_steps 60 --device cpu  # smoke
+
+縮小版（smoke）見第 3 集與 tests/test_posttrain.py。
 """
 
 import argparse
