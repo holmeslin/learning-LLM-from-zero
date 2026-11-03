@@ -64,11 +64,11 @@ ring_all_reduce    31.9 ms  0.78 GB/s
 
 兩者相除，\\( \Psi \\) 消掉了（梯度用 bfloat16，每個數 2 位元組）：
 
-\\[ \frac{t_{\text{compute}}}{t_{\text{comm}}} = \frac{6 \Psi B T / F}{4 \Psi / \text{BW}} = \frac{1.5\, B T \cdot \text{BW}}{F} \\]
+\\[ \frac{t_{\text{compute}}}{t_{\text{comm}}} = \frac{6 \Psi B T / F}{4 \Psi / \text{BW}} = \frac{1.5\\, B T \cdot \text{BW}}{F} \\]
 
 要讓計算時間大於通訊時間（第 5 集的重疊才藏得住通訊），每個 rank 每步至少要看
 
-\\[ B T > \frac{F}{1.5\, \text{BW}} \\]
+\\[ B T > \frac{F}{1.5\\, \text{BW}} \\]
 
 個 token。代入幾組數字，\\( F \\) 用第 1 集的假設：H100 的 990 TFLOPs 用到 40%：
 
@@ -99,8 +99,8 @@ for name, bandwidth in [("400 GB/s", 400e9), ("50 GB/s", 50e9), ("5 GB/s", 5e9)]
 ## 重點整理
 
 - ring all-reduce 的通訊時間約 \\( 2S / \text{BW} \\)，和卡數幾乎無關。
-- 計算時間 \\( 6\Psi BT / F \\)；兩者的比值是 \\( 1.5\, BT \cdot \text{BW} / F \\)，和模型大小無關。
-- 每個 rank 每步的 token 數要大於 \\( F / (1.5\,\text{BW}) \\)，通訊才藏得住；卡越快越需要高頻寬。
+- 計算時間 \\( 6\Psi BT / F \\)；兩者的比值是 \\( 1.5\\, BT \cdot \text{BW} / F \\)，和模型大小無關。
+- 每個 rank 每步的 token 數要大於 \\( F / (1.5\\,\text{BW}) \\)，通訊才藏得住；卡越快越需要高頻寬。
 - 本機 Gloo 實測約 0.5～0.65 GB/s，比記憶體頻寬慢幾百倍，CPU 模擬只用來學寫法。
 
 ## 自我挑戰

@@ -100,7 +100,7 @@ J 對 5 個 logits 的梯度 [-0.56, 0.04, -0.16, 0.44, 0.24]
 
 可是真實的問題裡，沒有人告訴我們 `means`，我們只能拉、只能看到拉到的獎勵。這時可以用抽樣估計梯度，關鍵是一個小技巧：
 
-\\[ \nabla J = \sum_a \nabla \pi(a)\, R(a) = \sum_a \pi(a)\, R(a)\, \nabla \log \pi(a) = \mathbb{E}_{a \sim \pi}\big[ R(a)\, \nabla \log \pi(a) \big] \\]
+\\[ \nabla J = \sum_a \nabla \pi(a)\\, R(a) = \sum_a \pi(a)\\, R(a)\\, \nabla \log \pi(a) = \mathbb{E}_{a \sim \pi}\big[ R(a)\\, \nabla \log \pi(a) \big] \\]
 
 \\( \nabla \\) 是對 logits 的梯度，\\( \pi(a) \\) 是 policy 選動作 \\( a \\) 的機率，\\( R(a) \\) 是它的平均獎勵。第二個等號用到 \\( \ln x \\) 的導數是 \\( 1/x \\) 與鏈鎖律（第 1 章第 11 集）：\\( \nabla \log \pi = \nabla \pi / \pi \\)，所以 \\( \nabla \pi = \pi \nabla \log \pi \\)。這樣每一項都帶著 \\( \pi(a) \\)，整個式子就是「照 policy 抽動作」的期望值 \\( \mathbb{E} \\)（照機率加權的平均），而期望值可以用抽樣平均來估計：
 
@@ -211,7 +211,7 @@ n=10000  估計 -0.56 +0.03 -0.17 +0.46 +0.23  重複 200 次的平均誤差 0.0
 ## 重點整理
 
 - RL 讓模型自己寫答案、由獎勵函式打分，不需要標準答案；policy 是根據情況決定動作的規則，語言模型本身就是 policy，目標是平均獎勵 \\( J \\) 越高越好。
-- 只能抽樣、不知道平均獎勵時，用 \\( \nabla J = \mathbb{E}[R \, \nabla \log \pi(a)] \\) 估計梯度：抽動作、拿獎勵，獎勵越高就越用力把這個動作的機率往上推。
+- 只能抽樣、不知道平均獎勵時，用 \\( \nabla J = \mathbb{E}[R \\, \nabla \log \pi(a)] \\) 估計梯度：抽動作、拿獎勵，獎勵越高就越用力把這個動作的機率往上推。
 - softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`；`reinforce_loss` 是 \\( -\text{advantage} \cdot \log \pi(a) \\) 的平均，梯度下降它就是讓平均獎勵往上爬。
 - 抽的樣本越多，估計越接近精確梯度，誤差約隨 \\( 1/\sqrt{n} \\) 下降；單一樣本的估計非常吵。
 - 語言模型上的做法一樣，只是動作是整段回答，log 機率是每個 token 的 log 機率相加。

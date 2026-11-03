@@ -53,9 +53,9 @@ for steps in [0, 25, 50, 100, 200, 400]:
 
 解法是讓力道變成「比平均好多少」：獎勵減掉一個 baseline \\( b \\)。
 
-\\[ \nabla J = \mathbb{E}\big[ (R - b)\, \nabla \log \pi(a) \big] \\]
+\\[ \nabla J = \mathbb{E}\big[ (R - b)\\, \nabla \log \pi(a) \big] \\]
 
-只要 \\( b \\) 不依賴被抽到的動作，這個式子的平均值和沒減時一樣，因為 \\( \mathbb{E}[\, b \cdot \nabla \log \pi(a)\,] = b \sum_a \pi(a) \nabla \log \pi(a) = b \sum_a \nabla \pi(a) = b\, \nabla 1 = 0 \\)：機率加總永遠是 1，微分是 0。但單次抽樣的結果會穩定很多，因為力道不再被大常數撐大。
+只要 \\( b \\) 不依賴被抽到的動作，這個式子的平均值和沒減時一樣，因為 \\( \mathbb{E}[\\, b \cdot \nabla \log \pi(a)\\,] = b \sum_a \pi(a) \nabla \log \pi(a) = b \sum_a \nabla \pi(a) = b\\, \nabla 1 = 0 \\)：機率加總永遠是 1，微分是 0。但單次抽樣的結果會穩定很多，因為力道不再被大常數撐大。
 
 `estimate_gradient` 的 `baseline=True` 用的是「這一批獎勵的平均」。為了量，我們固定 policy 在初始狀態（5 台機率一樣），反覆估計 1000 次梯度，看每個分量的變異（variance，`.var()`，也就是標準差 `.std()` 的平方）加總，以及 1000 次的平均：
 

@@ -14,13 +14,13 @@
 
 backward 拿到的是 loss 對輸出的梯度 \\( dO \\)（形狀和 \\( O \\) 一樣），要算出 \\( dQ \\)、\\( dK \\)、\\( dV \\)。照第 1 章的鏈鎖律一步一步往回推：
 
-- \\( O = PV \\) 是矩陣乘法：\\( dV = P^\top dO \\)，\\( dP = dO\, V^\top \\)。
+- \\( O = PV \\) 是矩陣乘法：\\( dV = P^\top dO \\)，\\( dP = dO\\, V^\top \\)。
 - softmax 的 backward：\\( dS_{ij} = P_{ij} (dP_{ij} - D_i) \\)，其中 \\( D_i = \sum_j P_{ij} dP_{ij} \\)。
-- \\( S = QK^\top / \sqrt{d} \\)：\\( dQ = dS\, K / \sqrt{d} \\)，\\( dK = dS^\top Q / \sqrt{d} \\)。
+- \\( S = QK^\top / \sqrt{d} \\)：\\( dQ = dS\\, K / \sqrt{d} \\)，\\( dK = dS^\top Q / \sqrt{d} \\)。
 
 softmax 那一行看起來需要整列的 \\( P \\) 才能算 \\( D_i \\)，但它可以換個算法：
 
-\\[ D_i = \sum_j P_{ij}\, (dO_i \cdot V_j) = dO_i \cdot \sum_j P_{ij} V_j = dO_i \cdot O_i \\]
+\\[ D_i = \sum_j P_{ij}\\, (dO_i \cdot V_j) = dO_i \cdot \sum_j P_{ij} V_j = dO_i \cdot O_i \\]
 
 \\( O \\) 是 forward 的輸出，本來就有。所以 \\( D \\) 一開始用 `(do * o).sum(-1)` 一次算好，之後每一塊都不用看整列。
 
@@ -99,7 +99,7 @@ T= 2048  4.33 MB
 
 ## 重點整理
 
-- attention backward：\\( dV = P^\top dO \\)、\\( dP = dO\,V^\top \\)、\\( dS = P \circ (dP - D) \\)、\\( dQ = dS\,K/\sqrt{d} \\)、\\( dK = dS^\top Q/\sqrt{d} \\)。
+- attention backward：\\( dV = P^\top dO \\)、\\( dP = dO\\,V^\top \\)、\\( dS = P \circ (dP - D) \\)、\\( dQ = dS\\,K/\sqrt{d} \\)、\\( dK = dS^\top Q/\sqrt{d} \\)。
 - \\( D_i = dO_i \cdot O_i \\)，不需要整列的 \\( P \\)。
 - 用 forward 存下的 logsumexp 重算 \\( P = e^{S - L} \\)，不存機率矩陣，代價是多算一次 \\( QK^\top \\)。
 - `torch.autograd.Function` 自訂 forward／backward，`ctx.save_for_backward` 存張量，用 `.apply` 呼叫。

@@ -1980,7 +1980,7 @@ for b in [16, 32, 100]:
 
 **題目**
 
-驗證 \\( D_i = \sum_j P_{ij}\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
+驗證 \\( D_i = \sum_j P_{ij}\\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
 
 **練習目標**：理解為什麼 backward 不需要整列的 `P` 也能算 \\( D \\)。
 
@@ -2252,7 +2252,7 @@ print(m)
 
 **練習目標**：比值公式的推導，位元組數從 2 換成 4。
 
-**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
+**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
 
 **參考答案**
 
@@ -3262,7 +3262,7 @@ print("分數範圍", round(scores.min().item(), 2), "到", round(scores.max().i
 
 **題目**
 
-policy 比 reference 多給 `chosen` 的 log 機率 2、少給 `rejected` 2（reference 兩個都是 \\( -3 \\)，policy 是 \\( -1 \\) 與 \\( -5 \\)）。對 \\( \beta \in \{0.01, 0.1, 1, 5\} \\)，用 `dpo_loss` 各算 loss，並用 `backward()` 算對 `policy_chosen` 的梯度。loss 隨 \\( \beta \\) 怎麼變？梯度呢？為什麼？
+policy 比 reference 多給 `chosen` 的 log 機率 2、少給 `rejected` 2（reference 兩個都是 \\( -3 \\)，policy 是 \\( -1 \\) 與 \\( -5 \\)）。對 \\( \beta \in \\{0.01, 0.1, 1, 5\\} \\)，用 `dpo_loss` 各算 loss，並用 `backward()` 算對 `policy_chosen` 的梯度。loss 隨 \\( \beta \\) 怎麼變？梯度呢？為什麼？
 
 **練習目標**：\\( \beta \\) 同時放大隱含獎勵與壓縮 sigmoid 的有效範圍；loss 與梯度的大小不是單調的。
 
@@ -3290,9 +3290,9 @@ for beta in [0.01, 0.1, 1.0, 5.0]:
 
 **題目**
 
-吃角子老虎機的平均獎勵是 `[0, 3, 2, 5, 4]`，policy 的 logits 是 `[1.0, 0.0, 0.0, -1.0, 0.5]`。不要抽樣：對 5 個動作各算 \\( \pi(a)\, R(a)\, (\text{one\_hot}(a) - \pi) \\)，加起來，和對 `expected_reward` 做 `backward()` 得到的梯度比較。
+吃角子老虎機的平均獎勵是 `[0, 3, 2, 5, 4]`，policy 的 logits 是 `[1.0, 0.0, 0.0, -1.0, 0.5]`。不要抽樣：對 5 個動作各算 \\( \pi(a)\\, R(a)\\, (\text{one\_hot}(a) - \pi) \\)，加起來，和對 `expected_reward` 做 `backward()` 得到的梯度比較。
 
-**練習目標**：\\( \nabla J = \mathbb{E}[R \, \nabla \log \pi(a)] \\) 的期望值，真的就是把每個動作「機率乘上它的推力」加起來；抽樣只是用平均去逼近這個加總。
+**練習目標**：\\( \nabla J = \mathbb{E}[R \\, \nabla \log \pi(a)] \\) 的期望值，真的就是把每個動作「機率乘上它的推力」加起來；抽樣只是用平均去逼近這個加總。
 
 **批改重點**：兩個向量相同，約 `[-0.805, 0.149, 0.001, 0.164, 0.491]`。要能說出：softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`；抽樣估計的平均會趨近這個加總。
 

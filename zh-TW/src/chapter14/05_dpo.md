@@ -13,7 +13,7 @@
 \\[ \max\_\pi \\; \mathbb{E}\_{y \sim \pi(\cdot|x)}\big[ r(x, y) \big] - \beta \\, \mathrm{KL}\big( \pi(\cdot|x) \\,\\|\\, \pi\_{\text{ref}}(\cdot|x) \big) \tag{1} \\]
 
 - \\( \pi_{\text{ref}} \\) 是 **reference 模型**，這裡就是 SFT 之後、還沒動過的模型；\\( \pi \\) 是正在調整的 **policy**，從同一個起點開始。
-- \\( \mathrm{KL}(\pi \| \pi_{\text{ref}}) = \sum_y \pi(y) \log \frac{\pi(y)}{\pi_{\text{ref}}(y)} \\) 衡量 \\( \pi \\) 離 \\( \pi_{\text{ref}} \\) 有多遠，相同時是 0。
+- \\( \mathrm{KL}(\pi \\| \pi_{\text{ref}}) = \sum_y \pi(y) \log \frac{\pi(y)}{\pi_{\text{ref}}(y)} \\) 衡量 \\( \pi \\) 離 \\( \pi_{\text{ref}} \\) 有多遠，相同時是 0。
 - \\( \beta \\) 控制拉回來的力量：\\( \beta \\) 大，\\( \pi \\) 不敢離 reference 太遠；\\( \beta \\) 小，更敢追分數。
 
 傳統做法用強化學習（第 15 章會正式介紹）去最佳化 (1)：要訓練獎勵模型，還要邊訓練邊讓模型自己生成回答、打分數。DPO（Rafailov 等人，2023）的洞察是：(1) 有一個可以直接寫出來的最佳解，反過來用它，可以不要獎勵模型，也不要生成回答，直接用偏好資料訓練 \\( \pi \\)。
