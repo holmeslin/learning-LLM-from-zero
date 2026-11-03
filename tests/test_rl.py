@@ -1,19 +1,33 @@
+import json
 import math
 
+import pytest
 import torch
+from torch import nn
 
+import llmz.rl
 from llmz.functional import softmax
+from llmz.inference import generate_cached
+from llmz.model import ModelConfig, TransformerLM
+from llmz.posttrain import Task
 from llmz.rl import (
+    RLVRConfig,
     bandit_rewards,
     estimate_gradient,
     expected_reward,
     group_advantages,
+    grpo_loss,
     reinforce_loss,
+    rollout,
     sample_actions,
+    sample_batch,
+    token_logprobs,
     train_bandit,
     train_groups,
+    train_rlvr,
     verifiable_rewards,
 )
+from llmz.tokenizer import Tokenizer, base_vocab
 
 
 def test_expected_reward_is_probability_weighted_mean():
@@ -123,3 +137,204 @@ def test_train_groups_learns_the_correct_answers():
         logits = train_groups(torch.zeros(3, 10), correct, group_size=8, steps=300, lr=0.5, normalize_std=normalize_std)
         assert torch.equal(logits.argmax(dim=1), correct)
         assert softmax(logits)[torch.arange(3), correct].min() > 0.9
+
+
+# ---- 第 15 章第 4 集：token 層級的 clipped loss ----
+
+P = torch.tensor([[0.1, 0.6, 0.3], [0.2, 0.2, 0.6], [0.5, 0.25, 0.25]])  # 三個符號的 bigram「模型」：P[a][b] 是 a 的下一個是 b 的機率
+
+
+class BigramLM(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.logits = nn.Parameter(P.log())
+
+    def forward(self, ids):
+        return self.logits[ids]
+
+
+def test_token_logprobs_are_the_log_probability_of_each_next_token():
+    got = token_logprobs(BigramLM(), torch.tensor([[0, 1, 2, 0], [2, 2, 1, 1]]))
+    want = torch.tensor([[P[0, 1], P[1, 2], P[2, 0]], [P[2, 2], P[2, 1], P[1, 1]]]).log()  # 位置 t 預測 token t+1，所以少一格
+    assert got.shape == (2, 3)
+    assert torch.allclose(got, want, atol=1e-6)
+
+
+def clipped_grad(ratio: float, advantage: float, eps: float = 0.2):
+    """單一 token：old_logp = 0，所以 ratio = exp(logp)。回傳 (loss, 對 logp 的梯度)。"""
+    logp = torch.tensor([[math.log(ratio)]], requires_grad=True)
+    loss = grpo_loss(logp, torch.zeros(1, 1), torch.tensor([advantage]), torch.ones(1, 1, dtype=torch.bool), clip_eps=eps)
+    loss.backward()
+    return loss.item(), logp.grad.item()
+
+
+def test_gradient_is_zero_when_the_ratio_is_outside_the_clip_range_and_the_clip_is_the_smaller_term():
+    # advantage 為正、ratio 已經高過 1+eps：再推高沒有好處，被 clip 住；advantage 為負、ratio 已經低過 1-eps：同理
+    for ratio, advantage, want_loss in [(1.5, +1.0, -1.2), (0.5, -1.0, +0.8), (3.0, +2.0, -2.4), (0.1, -3.0, +2.4)]:
+        loss, grad = clipped_grad(ratio, advantage)
+        assert grad == 0.0
+        assert math.isclose(loss, want_loss, rel_tol=1e-5)  # loss 是 -(clip 之後的 ratio * A)
+
+
+def test_gradient_flows_when_the_ratio_moved_the_wrong_way():
+    # advantage 為正、ratio 掉到 1-eps 以下：min 取沒有 clip 的那項，要把它拉回來；advantage 為負、ratio 衝到 1+eps 以上同理
+    for ratio, advantage in [(0.5, +1.0), (1.5, -1.0)]:
+        loss, grad = clipped_grad(ratio, advantage)
+        assert math.isclose(loss, -ratio * advantage, rel_tol=1e-5)
+        assert math.isclose(grad, -ratio * advantage, rel_tol=1e-5)  # d(-ρA)/d logp = -ρA，因為 dρ/d logp = ρ
+
+
+def test_gradient_inside_the_clip_range_is_the_plain_policy_gradient():
+    loss, grad = clipped_grad(1.1, 2.0)
+    assert math.isclose(loss, -2.2, rel_tol=1e-5)
+    assert math.isclose(grad, -2.2, rel_tol=1e-5)
+    _, grad = clipped_grad(1.0, 1.0)  # ratio = 1（剛 rollout 完、還沒更新）：梯度就是 -A，和 REINFORCE 一樣
+    assert math.isclose(grad, -1.0, rel_tol=1e-6)
+
+
+def test_clip_range_follows_eps():
+    assert clipped_grad(1.5, 1.0, eps=0.2)[1] == 0.0
+    assert clipped_grad(1.5, 1.0, eps=0.6)[1] != 0.0  # 範圍放寬到 [0.4, 1.6]，1.5 就在裡面
+
+
+MASK2 = torch.tensor([[True, True], [True, False]])  # 第一條序列 2 個 token、第二條 1 個（第二個位置是補的或結尾之後）
+
+
+def test_length_norm_averages_tokens_within_each_sequence_first():
+    logp = torch.zeros(2, 2, requires_grad=True)
+    advantages = torch.tensor([1.0, 0.5])
+    loss = grpo_loss(logp, torch.zeros(2, 2), advantages, MASK2, length_norm=True)
+    loss.backward()
+    assert math.isclose(loss.item(), -(1.0 + 0.5) / 2, rel_tol=1e-6)  # 每條序列先對自己的 token 平均，再對序列平均
+    assert torch.allclose(logp.grad, torch.tensor([[-0.25, -0.25], [-0.25, 0.0]]))  # 長的序列每個 token 的權重比較小
+
+
+def test_without_length_norm_every_token_counts_the_same():
+    logp = torch.zeros(2, 2, requires_grad=True)
+    loss = grpo_loss(logp, torch.zeros(2, 2), torch.tensor([1.0, 0.5]), MASK2, length_norm=False)
+    loss.backward()
+    assert math.isclose(loss.item(), -(2 * 1.0 + 0.5) / 2, rel_tol=1e-6)  # token 數乘上 advantage，再對序列平均
+    assert torch.allclose(logp.grad, torch.tensor([[-0.5, -0.5], [-0.25, 0.0]]))
+
+
+def test_masked_positions_have_zero_gradient_even_if_their_ratio_would_overflow():
+    logp = torch.tensor([[0.0, 100.0]], requires_grad=True)  # 被遮掉的位置 exp(100) 在 float32 是 inf；inf * 0 不能變成 nan
+    loss = grpo_loss(logp, torch.zeros(1, 2), torch.tensor([1.0]), torch.tensor([[True, False]]))
+    loss.backward()
+    assert math.isclose(loss.item(), -1.0, rel_tol=1e-6)
+    assert torch.equal(logp.grad, torch.tensor([[-1.0, 0.0]]))
+
+
+def test_a_group_with_zero_advantage_gives_zero_gradient():
+    logp = torch.randn(3, 4, requires_grad=True)
+    grpo_loss(logp, logp.detach() + 0.05, torch.zeros(3), torch.ones(3, 4, dtype=torch.bool)).backward()
+    assert torch.equal(logp.grad, torch.zeros(3, 4))
+
+
+def test_ratio_one_loss_is_the_negative_mean_advantage_when_every_sequence_has_tokens():
+    logp = torch.randn(4, 3)
+    advantages = torch.tensor([1.0, -2.0, 0.5, 3.0])
+    loss = grpo_loss(logp, logp.clone(), advantages, torch.ones(4, 3, dtype=torch.bool))
+    assert math.isclose(loss.item(), -advantages.mean().item(), rel_tol=1e-6)
+
+
+# ---- 第 15 章第 5 集：rollout 與 RLVR ----
+
+END = "<|endoftext|>"
+TOK = Tokenizer(base_vocab([END]), [], [END])  # 一個 byte 一個 token，再加上 <|endoftext|>
+TINY = ModelConfig(vocab_size=257, context_length=128, d_model=32, n_layers=1, n_heads=2, d_ff=64)
+SHORT = Task("add", "2 + 3?", "five")
+LONG = Task("add", "ten minus four plus one equals?", "seven")  # 提示的長度和 SHORT 不一樣：rollout 要能把不同長度的提示一起處理
+
+
+def scripted_generate(model, ids, max_new_tokens, temperature=1.0):
+    """假的 sample_batch：同一個 prompt 的第 r 個回答是 r 決定的：第 0 個答 five 並寫結尾（後面還接著亂碼），第 1 個答 nine 並寫結尾，
+    LONG 題的每個回答都寫滿 max_new_tokens 個 token、不寫結尾。"""
+    rows = []
+    for r, row in enumerate(ids.tolist()):
+        text = TOK.decode(row)
+        if "2 + 3" in text:
+            new = TOK.encode([" five", " nine"][r % 2]) + [TOK.special_to_id[END]] + TOK.encode("xyz")
+        else:
+            new = TOK.encode(" abcdefghij")
+        rows.append(row + (new + TOK.encode("q" * 8))[:max_new_tokens])
+    return torch.tensor(rows)
+
+
+def test_rollout_keeps_ids_masks_the_response_and_scores_each_reply(monkeypatch):
+    monkeypatch.setattr(llmz.rl, "sample_batch", scripted_generate)
+    out = rollout(tiny_model(), TOK, [LONG, SHORT], group_size=2, max_new_tokens=8)
+    assert out.ids.shape == out.mask.shape == (4, len("User: ten minus four plus one equals?\nAssistant:") + 8)  # 補齊到最長的提示
+    assert torch.equal(out.rewards, torch.tensor([[0.0, 0.0], [1.0, 0.0]]))  # (題數, 每題的回答數)，順序和傳進來的 tasks 一樣
+    prompt_len = [len(TOK.encode(f"User: {t.question}\nAssistant:")) for t in (LONG, LONG, SHORT, SHORT)]
+    for row, n in enumerate(prompt_len):
+        assert not out.mask[row, :n].any()  # 提示不算
+    long_row, five_row, nine_row = out.mask[0], out.mask[2], out.mask[3]
+    assert long_row.sum() == 8  # 沒寫結尾：整段都算
+    assert five_row.sum() == len(" five") + 1  # " five" 加上結尾；結尾之後的亂碼不算
+    assert nine_row.sum() == len(" nine") + 1
+    end_at = prompt_len[2] + len(" five")
+    assert out.ids[2, end_at] == TOK.special_to_id[END] and five_row[end_at] and not five_row[end_at + 1]
+    assert TOK.decode(out.ids[2, prompt_len[2] : end_at].tolist()) == " five"
+    assert not out.mask[2, end_at + 1 :].any()  # 補齊的地方也是 False
+
+
+def tiny_model():
+    torch.manual_seed(0)
+    return TransformerLM(TINY)
+
+
+def test_sample_batch_at_a_tiny_temperature_is_greedy_decoding_from_chapter_11():
+    model = tiny_model()
+    ids = torch.tensor([TOK.encode("User: 2 + 3?\nAssistant:")] * 3)
+    assert torch.equal(sample_batch(model, ids, 6, temperature=1e-4), generate_cached(model, ids, 6, temperature=0.0))
+
+
+def test_sample_batch_draws_each_row_independently_from_softmax():
+    model = tiny_model()
+    ids = torch.tensor([TOK.encode("User: 2 + 3?\nAssistant:")] * 4000)
+    first = sample_batch(model, ids, 1)[:, -1]
+    probs = softmax(model(ids[:1])[0, -1])  # 4000 列都是同一個提示，第一個抽到的 token 的頻率要接近 softmax
+    freq = torch.bincount(first, minlength=257) / 4000
+    assert (first != first[0]).any() and (freq - probs).abs().max() < 0.03
+
+
+def test_rollout_samples_with_a_real_model_and_the_logprobs_line_up():
+    model = tiny_model()
+    out = rollout(model, TOK, [SHORT, LONG], group_size=3, max_new_tokens=5, temperature=1.0)
+    assert out.ids.shape[0] == 6 and out.rewards.shape == (2, 3)
+    logp = token_logprobs(model, out.ids)  # (N, T-1)：和 mask[:, 1:] 對齊
+    assert logp.shape == out.mask[:, 1:].shape
+    assert (logp[out.mask[:, 1:]] < 0).all()
+
+
+def smoke_config(tmp_path, **changes) -> RLVRConfig:
+    cfg = dict(sft_path="", out_dir=str(tmp_path / "rlvr"), model=TINY, prompts_per_step=4, group_size=4, max_new_tokens=4,
+               max_steps=3, epochs=2, lr=1e-3, eval_every=3, n_valid=8, device="cpu")
+    return RLVRConfig(**(cfg | changes))
+
+
+def test_smoke_rlvr_runs_updates_the_policy_and_writes_the_checkpoint(tmp_path):
+    cfg = smoke_config(tmp_path)
+    records = train_rlvr(cfg, TOK)
+    assert [r["step"] for r in records] == [0, 1, 2, 3]  # 第 0 步是還沒訓練的驗證正確率
+    assert all(0.0 <= r["reward"] <= 1.0 and 0.0 <= r["clip_frac"] <= 1.0 and math.isfinite(r["loss"]) for r in records[1:])
+    assert 0.0 <= records[-1]["val_accuracy"] <= 1.0
+    run = tmp_path / "rlvr"
+    assert json.loads((run / "log.jsonl").read_text().splitlines()[-1])["step"] == 3
+    model = TransformerLM(TINY)
+    model.load_state_dict(torch.load(run / "model.pt"))
+
+
+def test_first_update_of_a_rollout_is_on_policy_so_nothing_is_clipped(tmp_path):
+    records = train_rlvr(smoke_config(tmp_path, epochs=1, max_steps=2), TOK)
+    assert all(r["clip_frac"] == 0.0 for r in records[1:])  # 只更新一次：ratio 恆為 1
+
+
+def test_rlvr_raises_the_reward_it_is_given(tmp_path, monkeypatch):
+    # 隨機初始化的模型答不對任何一題（獎勵全是 0，沒有訊號）。換一個一開始約一半會拿到的 0/1 獎勵：回覆的第一個字元是 ASCII
+    monkeypatch.setattr(llmz.rl, "reward", lambda task, reply: float(reply[:1] != "" and ord(reply[0]) < 128))
+    cfg = smoke_config(tmp_path, prompts_per_step=4, group_size=8, max_steps=10, epochs=2, lr=1e-2, eval_every=10, max_new_tokens=2)
+    records = train_rlvr(cfg, TOK)[1:]
+    first, last = sum(r["reward"] for r in records[:3]) / 3, sum(r["reward"] for r in records[-3:]) / 3
+    assert 0.3 < first < 0.7 and last > first + 0.2  # 種子 0～4 實測：開頭 0.49～0.59，結尾 0.85～0.93

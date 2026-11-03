@@ -164,3 +164,5 @@
     - [policy gradient 直覺](chapter15/01_policy_gradient_intuition.md)
     - [REINFORCE 玩具版](chapter15/02_reinforce_toy.md)
     - [GRPO 的 group-relative advantage](chapter15/03_group_relative_advantage.md)
+    - [GRPO loss 實作與測試](chapter15/04_grpo_loss.md)
+    - [RLVR：用可驗證獎勵訓練 SFT 模型](chapter15/05_rlvr.md)

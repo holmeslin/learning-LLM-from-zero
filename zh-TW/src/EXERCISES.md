@@ -3241,3 +3241,70 @@ for k in range(1, 8):  # 8 個回答裡答對 k 個
     plain, normed = group_advantages(rewards, normalize_std=False)[0], group_advantages(rewards, normalize_std=True)[0]
     print(f"答對 {k} 個：答對的 advantage {plain[0]:+.3f}（不除）{normed[0]:+.3f}（除）；答錯的 {plain[-1]:+.3f}（不除）{normed[-1]:+.3f}（除）")
 ```
+
+### 第 4 集 GRPO loss 實作與測試 — 狀態：可用
+
+**題目**
+
+對 `clip_eps` 取 0.1、0.2、0.5，把比值從 0.35 到 1.95（間隔 0.1，每個值的小數是 5，避開剛好等於 \\( 1 \pm \varepsilon \\) 的邊界）掃一遍。對 advantage 是 +1 與 -1 兩種情況，用 `grpo_loss`（一個 token、`old_logp = 0`）數出「梯度剛好是 0」的比值有哪些，範圍落在哪裡。再回答：把 `clip_eps` 設成很大（例如 100），結果會變成什麼？
+
+**練習目標**：看懂 clip 是單側的：advantage 為正，只在比值高過 \\( 1+\varepsilon \\) 時關掉梯度；advantage 為負，只在低過 \\( 1-\varepsilon \\) 時關掉。
+
+**批改重點**：\\( A=+1 \\) 時，梯度為 0 的是比值高於 \\( 1+\varepsilon \\) 的那些（\\( \varepsilon \\) 為 0.1、0.2、0.5 時各 9、8、5 個，範圍 1.15～1.95、1.25～1.95、1.55～1.95）；\\( A=-1 \\) 時是低於 \\( 1-\varepsilon \\) 的那些（6、5、2 個，範圍 0.35～0.85、0.35～0.75、0.35～0.45）。同一個比值在兩種 advantage 下不會同時梯度為 0。\\( \varepsilon \\) 很大時 clip 永遠碰不到，loss 變成沒有 clip 的 \\( -\rho A \\) 的平均，也就是只靠 \\( \rho \\) 修正的 policy gradient，一批 rollout 更新很多次就可能把模型推得很遠。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.rl import grpo_loss
+
+
+def grad_at(ratio, advantage, eps):
+    logp = torch.tensor([[math.log(ratio)]], requires_grad=True)
+    grpo_loss(logp, torch.zeros(1, 1), torch.tensor([advantage]), torch.ones(1, 1, dtype=torch.bool), clip_eps=eps).backward()
+    return logp.grad.item()
+
+
+ratios = [0.35 + 0.1 * k for k in range(17)]  # 0.35、0.45、...、1.95：避開 1 ± eps 剛好的邊界
+for eps in [0.1, 0.2, 0.5]:
+    for advantage in [+1.0, -1.0]:
+        silent = [r for r in ratios if grad_at(r, advantage, eps) == 0.0]
+        print(f"eps={eps} A={advantage:+.0f}：{len(silent)} 個比值梯度為 0，範圍 {min(silent):.2f}～{max(silent):.2f}")
+```
+
+### 第 5 集 RLVR：用可驗證獎勵訓練 SFT 模型 — 狀態：可用
+
+**題目**
+
+用 `rollout` 對第 14 章的 SFT 模型（`runs/sft/model.pt`）取樣：`color` 題與 `who` 題各 64 題、每題 8 個回答（`temperature=1.0`，`torch.manual_seed(0)`）。各自數出：平均獎勵、整組全對的題數、整組全錯的題數、有對有錯的題數。只有「有對有錯」的組 advantage 不是 0；如果每一題答對的機率都是亂猜的 1/2（`color`）與 1/3（`who`），有對有錯的組應該佔幾成？實際數字和它一樣嗎？
+
+**練習目標**：RLVR 的訓練訊號只來自「組內有對有錯」的題目；整組全錯（或全對）的題目這一步等於白跑。
+
+**批改重點**：若每題的答對機率都一樣是 \\( p \\)，一組 8 個全對或全錯的機率是 \\( p^8 + (1-p)^8 \\)：`color`（\\( p=1/2 \\)）約 0.8%、`who`（\\( p=1/3 \\)）約 3.9%，所以有對有錯的組應該有 99% 與 96% 左右。實際一次的結果（CPU，種子 0）：`color` 平均獎勵 0.47，全對 0、全錯 2、有對有錯 62（97%）；`who` 平均獎勵 0.33，全對 0、全錯 6、有對有錯 58（91%）。`who` 的全錯組比預期多：模型對每一題不是都剛好 1/3，有些題它偏向一個錯的名字，答對機率比 1/3 低很多。數字隨種子與機器略有不同。
+
+**參考答案**
+
+```python,norun
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.posttrain import make_tasks
+from llmz.rl import rollout
+from llmz.tokenizer import Tokenizer
+
+tokenizer = Tokenizer.load("data/tokenizer.json")
+model = TransformerLM(ModelConfig())
+model.load_state_dict(torch.load("runs/sft/model.pt", map_location="cpu"))
+
+for kind in ["color", "who"]:
+    torch.manual_seed(0)
+    tasks = make_tasks(64, seed=0, kinds=(kind,))
+    rewards = rollout(model, tokenizer, tasks, group_size=8, max_new_tokens=4).rewards  # (64, 8)
+    all_right = int((rewards.min(dim=1).values == 1).sum())
+    all_wrong = int((rewards.max(dim=1).values == 0).sum())
+    mixed = 64 - all_right - all_wrong  # 只有這些組的 advantage 不是 0
+    print(f"{kind:5s} 平均獎勵 {rewards.mean():.2f}  整組全對 {all_right}  整組全錯 {all_wrong}  有對有錯 {mixed}（{mixed / 64:.0%}）")
+```
