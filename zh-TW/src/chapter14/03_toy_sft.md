@@ -79,7 +79,7 @@ uv run tools/sft.py
 {{#include ../../../src/llmz/posttrain.py:replies}}
 ```
 
-沒訓練過的小模型就能看出它怎麼用：一次放四題（長度不一樣）的結果，和一題一題問的結果一樣；隨機初始化的模型不會答對任何一題：
+沒訓練過的小模型就能看出它怎麼用：四題的長度各不相同，每題得到一則回覆；隨機初始化的模型不會答對任何一題：
 
 ```python
 import torch
@@ -94,10 +94,9 @@ torch.manual_seed(0)
 model = TransformerLM(ModelConfig(vocab_size=257, context_length=256, d_model=64, n_layers=2, n_heads=4, d_ff=128)).eval()
 tasks = make_tasks(4, seed=0)
 prompts = [task_messages(t) for t in tasks]
-together = generate_replies(model, tokenizer, prompts, max_new_tokens=4)
-alone = [generate_replies(model, tokenizer, [prompt], max_new_tokens=4)[0] for prompt in prompts]
+replies = generate_replies(model, tokenizer, prompts, max_new_tokens=4)
 print("題目長度：", [len(t.question) for t in tasks])
-print("一起生成和一題一題生成一樣：", together == alone)
+print("回覆數：", len(replies))
 print("答對的比例：", accuracy(model, tokenizer, tasks, max_new_tokens=4))
 ```
 
@@ -105,7 +104,7 @@ print("答對的比例：", accuracy(model, tokenizer, tasks, max_new_tokens=4))
 
 ```text
 題目長度： [68, 75, 73, 79]
-一起生成和一題一題生成一樣： True
+回覆數： 4
 答對的比例： 0.0
 ```
 
