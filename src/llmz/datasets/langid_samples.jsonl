@@ -1,0 +1,182 @@
+{"lang": "en", "split": "train", "text": "The weather was cold this morning, so we put on our warm coats and walked to the market. There were apples, bread and fresh cheese on every table, and the vendor greeted us with a smile."}
+{"lang": "en", "split": "train", "text": "Our company provides free shipping on all orders over fifty dollars. Please read our privacy policy and terms of service before you create an account."}
+{"lang": "en", "split": "train", "text": "To install the program, download the latest version from the website, open the file and follow the instructions on the screen. If you have any questions, contact our support team."}
+{"lang": "en", "split": "train", "text": "The city council voted on Tuesday to build a new library near the river. Residents said the project would bring more visitors and help local businesses grow."}
+{"lang": "en", "split": "train", "text": "Cooking rice is simple: rinse it twice, add two cups of water for each cup of rice, and let it simmer for about fifteen minutes with the lid closed."}
+{"lang": "en", "split": "train", "text": "Home, About us, Products, Contact, Sign in, Subscribe to our newsletter, Follow us on social media. All rights reserved."}
+{"lang": "en", "split": "train", "text": "My brother plays football every weekend with his friends. They usually meet at the park near our house, and afterwards they all go out for pizza."}
+{"lang": "en", "split": "train", "text": "Scientists have found that regular exercise can improve sleep, lower stress and keep the heart healthy. Even a short walk after dinner makes a difference."}
+{"lang": "en", "split": "train", "text": "I would like to book a room for two nights in December. Could you tell me whether breakfast is included and how far the hotel is from the station?"}
+{"lang": "en", "split": "train", "text": "The museum is open from nine in the morning until five in the afternoon, every day except Monday. Children under twelve can enter for free when they come with an adult."}
+{"lang": "en", "split": "train", "text": "She opened the old wooden box and found a pile of letters tied with a blue ribbon. Nobody in the family had seen them for more than forty years."}
+{"lang": "en", "split": "train", "text": "This review reflects my own experience with the product. The battery lasts all day, the screen is bright, and the price is fair for what you get."}
+{"lang": "zh", "split": "train", "text": "今天早上天氣很冷，我們穿上厚外套走到市場。每張桌子上都擺著蘋果、麵包和新鮮的起司，攤販笑著跟我們打招呼。"}
+{"lang": "zh", "split": "train", "text": "本公司所有訂單滿一千元即可免運費。建立帳號之前，請先閱讀我們的隱私權政策與服務條款。"}
+{"lang": "zh", "split": "train", "text": "安裝程式的方法很簡單：先從網站下載最新版本，打開檔案，再依照畫面上的指示操作。如果有任何問題，歡迎聯絡客服人員。"}
+{"lang": "zh", "split": "train", "text": "市議會週二投票通過，要在河邊蓋一座新的圖書館。居民表示，這個計畫會帶來更多遊客，也能幫助當地的商店成長。"}
+{"lang": "zh", "split": "train", "text": "煮飯其實不難：把米洗兩次，一杯米加兩杯水，蓋上鍋蓋用小火煮大約十五分鐘就好了。"}
+{"lang": "zh", "split": "train", "text": "首頁、關於我們、產品介紹、聯絡我們、會員登入、訂閱電子報、追蹤我們的社群專頁。版權所有，翻印必究。"}
+{"lang": "zh", "split": "train", "text": "我哥哥每個週末都跟朋友去踢足球。他們通常在我家附近的公園集合，踢完球以後一起去吃披薩。"}
+{"lang": "zh", "split": "train", "text": "科學家發現，規律運動可以改善睡眠、減輕壓力，也對心臟有好處。就算只是晚餐後散步一會兒，也有幫助。"}
+{"lang": "zh", "split": "train", "text": "我想訂十二月的兩晚住宿。請問早餐有包含在內嗎？飯店離車站有多遠？"}
+{"lang": "zh", "split": "train", "text": "博物館每天早上九點開放到下午五點，星期一休館。十二歲以下的兒童由大人陪同入場可以免費。"}
+{"lang": "zh", "split": "train", "text": "她打開那個舊木盒，發現裡面有一疊用藍色緞帶綁起來的信。家裡已經四十多年沒有人看過這些信了。"}
+{"lang": "zh", "split": "train", "text": "这篇评论只代表我自己的使用经验。电池可以用一整天，屏幕很亮，价格对这样的产品来说也算合理。"}
+{"lang": "zh", "split": "train", "text": "欢迎访问我们的网站。请先注册账号，然后登录，就可以查看订单、修改个人资料和联系客服。"}
+{"lang": "zh", "split": "train", "text": "这个周末我们打算去海边玩，如果天气不好，就留在家里看电影、做饭。"}
+{"lang": "ja", "split": "train", "text": "今朝はとても寒かったので、私たちは暖かいコートを着て市場まで歩きました。どのテーブルにもりんごやパン、新鮮なチーズが並んでいて、店の人が笑顔で迎えてくれました。"}
+{"lang": "ja", "split": "train", "text": "当社では、五千円以上のご注文は送料無料です。アカウントを作成する前に、プライバシーポリシーと利用規約をお読みください。"}
+{"lang": "ja", "split": "train", "text": "プログラムをインストールするには、ウェブサイトから最新版をダウンロードして、ファイルを開き、画面の指示に従ってください。ご不明な点がありましたら、サポートまでお問い合わせください。"}
+{"lang": "ja", "split": "train", "text": "市議会は火曜日、川の近くに新しい図書館を建てることを決めました。住民は、この計画で訪れる人が増え、地元のお店も元気になると話しています。"}
+{"lang": "ja", "split": "train", "text": "ご飯の炊き方は簡単です。お米を二回洗って、お米一カップに水を一カップ半入れ、ふたをして中火で十五分ほど炊きます。"}
+{"lang": "ja", "split": "train", "text": "ホーム、会社概要、商品一覧、お問い合わせ、ログイン、メールマガジンの登録。無断転載を禁じます。"}
+{"lang": "ja", "split": "train", "text": "兄は毎週末、友達とサッカーをしています。いつも家の近くの公園に集まって、そのあとみんなでピザを食べに行きます。"}
+{"lang": "ja", "split": "train", "text": "定期的な運動は睡眠を良くし、ストレスを減らし、心臓にも良いことが分かっています。夕食のあとに少し歩くだけでも効果があります。"}
+{"lang": "ja", "split": "train", "text": "十二月に二泊で部屋を予約したいのですが、朝食は付いていますか。ホテルは駅からどのくらいですか。"}
+{"lang": "ja", "split": "train", "text": "博物館は月曜日を除いて、毎日午前九時から午後五時まで開いています。十二歳以下のお子さまは、大人と一緒なら無料で入れます。"}
+{"lang": "ja", "split": "train", "text": "彼女は古い木の箱を開けて、青いリボンで結んだ手紙の束を見つけました。家族の誰も、四十年以上それを見ていませんでした。"}
+{"lang": "ja", "split": "train", "text": "このレビューは私自身の使用経験に基づいています。バッテリーは一日もちますし、画面も明るく、値段もこの内容なら妥当だと思います。"}
+{"lang": "ko", "split": "train", "text": "오늘 아침은 날씨가 추워서 우리는 따뜻한 외투를 입고 시장까지 걸어갔습니다. 탁자마다 사과와 빵, 신선한 치즈가 놓여 있었고 상인이 웃으며 인사해 주었습니다."}
+{"lang": "ko", "split": "train", "text": "저희 회사는 오만 원 이상 주문하시면 배송비가 무료입니다. 계정을 만들기 전에 개인정보 처리방침과 이용약관을 꼭 읽어 주세요."}
+{"lang": "ko", "split": "train", "text": "프로그램을 설치하려면 웹사이트에서 최신 버전을 내려받아 파일을 열고 화면의 안내를 따르세요. 궁금한 점이 있으면 고객센터로 문의해 주시기 바랍니다."}
+{"lang": "ko", "split": "train", "text": "시의회는 화요일에 강 근처에 새 도서관을 짓기로 의결했습니다. 주민들은 이 사업으로 방문객이 늘고 지역 상점도 활기를 얻을 것이라고 말했습니다."}
+{"lang": "ko", "split": "train", "text": "밥 짓는 법은 간단합니다. 쌀을 두 번 씻고, 쌀 한 컵에 물 한 컵을 넣은 다음 뚜껑을 덮고 약 십오 분 동안 끓이면 됩니다."}
+{"lang": "ko", "split": "train", "text": "홈, 회사 소개, 제품 안내, 문의하기, 로그인, 뉴스레터 구독. 모든 권리는 보호됩니다."}
+{"lang": "ko", "split": "train", "text": "우리 형은 주말마다 친구들과 축구를 합니다. 보통 집 근처 공원에서 만나고, 끝나면 다 같이 피자를 먹으러 갑니다."}
+{"lang": "ko", "split": "train", "text": "규칙적인 운동은 잠을 잘 자게 하고 스트레스를 줄이며 심장에도 좋다는 것이 밝혀졌습니다. 저녁 식사 후에 잠깐 걷기만 해도 도움이 됩니다."}
+{"lang": "ko", "split": "train", "text": "십이월에 이박 삼일로 방을 예약하고 싶습니다. 조식이 포함되어 있나요? 호텔은 역에서 얼마나 먼가요?"}
+{"lang": "ko", "split": "train", "text": "박물관은 월요일을 제외하고 매일 오전 아홉 시부터 오후 다섯 시까지 문을 엽니다. 열두 살 미만 어린이는 어른과 함께 오면 무료로 입장할 수 있습니다."}
+{"lang": "ko", "split": "train", "text": "그녀는 낡은 나무 상자를 열고 파란 리본으로 묶은 편지 뭉치를 발견했습니다. 가족 중 누구도 사십 년이 넘도록 그 편지를 본 적이 없었습니다."}
+{"lang": "ko", "split": "train", "text": "이 후기는 제가 직접 써 본 경험을 바탕으로 한 것입니다. 배터리는 하루 종일 가고 화면도 밝으며, 가격도 이 정도면 괜찮다고 생각합니다."}
+{"lang": "ru", "split": "train", "text": "Сегодня утром было холодно, поэтому мы надели тёплые пальто и пошли на рынок. На каждом столе лежали яблоки, хлеб и свежий сыр, а продавец встретил нас с улыбкой."}
+{"lang": "ru", "split": "train", "text": "Наша компания предлагает бесплатную доставку при заказе от тысячи рублей. Пожалуйста, прочитайте политику конфиденциальности и условия использования, прежде чем создавать учётную запись."}
+{"lang": "ru", "split": "train", "text": "Чтобы установить программу, скачайте последнюю версию с сайта, откройте файл и следуйте инструкциям на экране. Если у вас есть вопросы, свяжитесь со службой поддержки."}
+{"lang": "ru", "split": "train", "text": "Городской совет во вторник проголосовал за строительство новой библиотеки у реки. Жители считают, что проект привлечёт больше посетителей и поможет местным магазинам."}
+{"lang": "ru", "split": "train", "text": "Сварить рис просто: промойте его два раза, на стакан риса налейте два стакана воды и варите под закрытой крышкой около пятнадцати минут."}
+{"lang": "ru", "split": "train", "text": "Главная, О компании, Каталог, Контакты, Войти, Подписаться на рассылку. Все права защищены."}
+{"lang": "ru", "split": "train", "text": "Мой брат каждые выходные играет в футбол с друзьями. Обычно они встречаются в парке недалеко от нашего дома, а потом все вместе идут есть пиццу."}
+{"lang": "ru", "split": "train", "text": "Учёные установили, что регулярные упражнения улучшают сон, снижают стресс и полезны для сердца. Даже короткая прогулка после ужина помогает."}
+{"lang": "ru", "split": "train", "text": "Я хотел бы забронировать номер на две ночи в декабре. Скажите, пожалуйста, включён ли завтрак и как далеко отель от вокзала?"}
+{"lang": "ru", "split": "train", "text": "Музей открыт с девяти утра до пяти вечера каждый день, кроме понедельника. Дети до двенадцати лет проходят бесплатно в сопровождении взрослого."}
+{"lang": "ru", "split": "train", "text": "Она открыла старую деревянную коробку и нашла стопку писем, перевязанную синей лентой. Никто в семье не видел их больше сорока лет."}
+{"lang": "ru", "split": "train", "text": "Этот отзыв основан на моём собственном опыте. Батарея держит целый день, экран яркий, а цена вполне разумная для такого устройства."}
+{"lang": "de", "split": "train", "text": "Heute Morgen war es kalt, deshalb zogen wir unsere warmen Mäntel an und gingen zum Markt. Auf jedem Tisch lagen Äpfel, Brot und frischer Käse, und der Händler begrüßte uns mit einem Lächeln."}
+{"lang": "de", "split": "train", "text": "Unser Unternehmen liefert alle Bestellungen ab fünfzig Euro versandkostenfrei. Bitte lesen Sie unsere Datenschutzerklärung und die Allgemeinen Geschäftsbedingungen, bevor Sie ein Konto anlegen."}
+{"lang": "de", "split": "train", "text": "Um das Programm zu installieren, laden Sie die neueste Version von der Webseite herunter, öffnen die Datei und folgen den Anweisungen auf dem Bildschirm. Bei Fragen wenden Sie sich bitte an unseren Kundendienst."}
+{"lang": "de", "split": "train", "text": "Der Stadtrat hat am Dienstag beschlossen, in der Nähe des Flusses eine neue Bibliothek zu bauen. Die Anwohner sagen, das Projekt bringe mehr Besucher und helfe den örtlichen Geschäften."}
+{"lang": "de", "split": "train", "text": "Reis zu kochen ist einfach: Man wäscht ihn zweimal, gibt auf eine Tasse Reis zwei Tassen Wasser und lässt ihn etwa fünfzehn Minuten bei geschlossenem Deckel köcheln."}
+{"lang": "de", "split": "train", "text": "Startseite, Über uns, Produkte, Kontakt, Anmelden, Newsletter abonnieren, Impressum. Alle Rechte vorbehalten."}
+{"lang": "de", "split": "train", "text": "Mein Bruder spielt jedes Wochenende mit seinen Freunden Fußball. Meistens treffen sie sich im Park bei uns um die Ecke, und danach gehen alle zusammen Pizza essen."}
+{"lang": "de", "split": "train", "text": "Wissenschaftler haben herausgefunden, dass regelmäßige Bewegung den Schlaf verbessert, Stress abbaut und dem Herzen guttut. Schon ein kurzer Spaziergang nach dem Abendessen hilft."}
+{"lang": "de", "split": "train", "text": "Ich möchte im Dezember ein Zimmer für zwei Nächte buchen. Können Sie mir sagen, ob das Frühstück inbegriffen ist und wie weit das Hotel vom Bahnhof entfernt liegt?"}
+{"lang": "de", "split": "train", "text": "Das Museum ist täglich außer montags von neun bis siebzehn Uhr geöffnet. Kinder unter zwölf Jahren haben in Begleitung eines Erwachsenen freien Eintritt."}
+{"lang": "de", "split": "train", "text": "Sie öffnete die alte Holzkiste und fand einen Stapel Briefe, der mit einem blauen Band zusammengebunden war. Seit mehr als vierzig Jahren hatte niemand in der Familie sie gesehen."}
+{"lang": "de", "split": "train", "text": "Diese Bewertung beruht auf meiner eigenen Erfahrung mit dem Produkt. Der Akku hält den ganzen Tag, der Bildschirm ist hell, und der Preis ist für das Gebotene in Ordnung."}
+{"lang": "fr", "split": "train", "text": "Ce matin, il faisait froid, alors nous avons mis nos manteaux chauds et nous sommes allés au marché. Il y avait des pommes, du pain et du fromage frais sur chaque table, et le marchand nous a accueillis avec le sourire."}
+{"lang": "fr", "split": "train", "text": "Notre société offre la livraison gratuite pour toute commande de plus de cinquante euros. Veuillez lire notre politique de confidentialité et nos conditions d'utilisation avant de créer un compte."}
+{"lang": "fr", "split": "train", "text": "Pour installer le programme, téléchargez la dernière version sur le site, ouvrez le fichier et suivez les instructions à l'écran. Si vous avez des questions, contactez notre service client."}
+{"lang": "fr", "split": "train", "text": "Le conseil municipal a voté mardi la construction d'une nouvelle bibliothèque près de la rivière. Les habitants estiment que ce projet attirera davantage de visiteurs et aidera les commerces du quartier."}
+{"lang": "fr", "split": "train", "text": "Faire cuire du riz est très simple : on le rince deux fois, on ajoute deux verres d'eau pour un verre de riz, puis on laisse mijoter environ quinze minutes, le couvercle fermé."}
+{"lang": "fr", "split": "train", "text": "Accueil, Qui sommes-nous, Produits, Contact, Connexion, S'abonner à la lettre d'information, Mentions légales. Tous droits réservés."}
+{"lang": "fr", "split": "train", "text": "Mon frère joue au football avec ses amis tous les week-ends. Ils se retrouvent d'habitude dans le parc près de chez nous, puis ils vont tous manger une pizza."}
+{"lang": "fr", "split": "train", "text": "Des chercheurs ont montré qu'une activité physique régulière améliore le sommeil, réduit le stress et protège le cœur. Même une courte promenade après le dîner fait du bien."}
+{"lang": "fr", "split": "train", "text": "Je voudrais réserver une chambre pour deux nuits en décembre. Pouvez-vous me dire si le petit déjeuner est compris et à quelle distance de la gare se trouve l'hôtel ?"}
+{"lang": "fr", "split": "train", "text": "Le musée est ouvert tous les jours, sauf le lundi, de neuf heures à dix-sept heures. Les enfants de moins de douze ans entrent gratuitement s'ils sont accompagnés d'un adulte."}
+{"lang": "fr", "split": "train", "text": "Elle ouvrit la vieille boîte en bois et trouva une pile de lettres attachées par un ruban bleu. Personne dans la famille ne les avait vues depuis plus de quarante ans."}
+{"lang": "fr", "split": "train", "text": "Cet avis repose sur ma propre expérience du produit. La batterie tient toute la journée, l'écran est lumineux et le prix est correct pour ce que l'on obtient."}
+{"lang": "es", "split": "train", "text": "Esta mañana hacía frío, así que nos pusimos los abrigos y caminamos hasta el mercado. En cada mesa había manzanas, pan y queso fresco, y el vendedor nos saludó con una sonrisa."}
+{"lang": "es", "split": "train", "text": "Nuestra empresa ofrece envío gratuito en todos los pedidos de más de cincuenta euros. Lea nuestra política de privacidad y las condiciones de uso antes de crear una cuenta."}
+{"lang": "es", "split": "train", "text": "Para instalar el programa, descargue la última versión desde el sitio web, abra el archivo y siga las instrucciones que aparecen en la pantalla. Si tiene alguna duda, póngase en contacto con nuestro servicio de atención al cliente."}
+{"lang": "es", "split": "train", "text": "El ayuntamiento votó el martes construir una nueva biblioteca cerca del río. Los vecinos dicen que el proyecto traerá más visitantes y ayudará a los comercios de la zona."}
+{"lang": "es", "split": "train", "text": "Cocinar arroz es fácil: se lava dos veces, se añaden dos tazas de agua por cada taza de arroz y se deja hervir a fuego lento unos quince minutos con la tapa puesta."}
+{"lang": "es", "split": "train", "text": "Inicio, Quiénes somos, Productos, Contacto, Iniciar sesión, Suscríbase a nuestro boletín, Aviso legal. Todos los derechos reservados."}
+{"lang": "es", "split": "train", "text": "Mi hermano juega al fútbol con sus amigos todos los fines de semana. Suelen quedar en el parque que hay cerca de casa y después se van todos a comer pizza."}
+{"lang": "es", "split": "train", "text": "Los científicos han descubierto que el ejercicio regular mejora el sueño, reduce el estrés y es bueno para el corazón. Incluso un paseo corto después de la cena ayuda."}
+{"lang": "es", "split": "train", "text": "Quisiera reservar una habitación para dos noches en diciembre. ¿Me podría decir si el desayuno está incluido y a qué distancia está el hotel de la estación?"}
+{"lang": "es", "split": "train", "text": "El museo abre todos los días, excepto los lunes, de nueve de la mañana a cinco de la tarde. Los niños menores de doce años entran gratis si van acompañados de un adulto."}
+{"lang": "es", "split": "train", "text": "Ella abrió la vieja caja de madera y encontró un montón de cartas atadas con una cinta azul. Nadie de la familia las había visto en más de cuarenta años."}
+{"lang": "es", "split": "train", "text": "Esta opinión se basa en mi propia experiencia con el producto. La batería dura todo el día, la pantalla es brillante y el precio es razonable para lo que ofrece."}
+{"lang": "pt", "split": "train", "text": "Hoje de manhã estava frio, por isso vestimos os casacos e fomos a pé até ao mercado. Em cada banca havia maçãs, pão e queijo fresco, e o vendedor recebeu-nos com um sorriso."}
+{"lang": "pt", "split": "train", "text": "A nossa empresa oferece envio gratuito em todas as encomendas acima de cinquenta euros. Leia a política de privacidade e os termos de utilização antes de criar uma conta."}
+{"lang": "pt", "split": "train", "text": "Para instalar o programa, baixe a versão mais recente no site, abra o arquivo e siga as instruções na tela. Se tiver alguma dúvida, entre em contato com o nosso atendimento ao cliente."}
+{"lang": "pt", "split": "train", "text": "A câmara municipal votou na terça-feira a construção de uma nova biblioteca perto do rio. Os moradores dizem que o projeto vai trazer mais visitantes e ajudar o comércio local."}
+{"lang": "pt", "split": "train", "text": "Cozinhar arroz é simples: lava-se duas vezes, juntam-se duas chávenas de água para cada chávena de arroz e deixa-se ferver em lume brando cerca de quinze minutos, com a tampa fechada."}
+{"lang": "pt", "split": "train", "text": "Início, Quem somos, Produtos, Contato, Entrar, Assine a nossa newsletter, Termos de uso. Todos os direitos reservados."}
+{"lang": "pt", "split": "train", "text": "O meu irmão joga futebol com os amigos todos os fins de semana. Costumam encontrar-se no parque perto de casa e depois vão todos comer uma pizza."}
+{"lang": "pt", "split": "train", "text": "Os cientistas descobriram que o exercício regular melhora o sono, reduz o estresse e faz bem ao coração. Até uma caminhada curta depois do jantar ajuda."}
+{"lang": "pt", "split": "train", "text": "Gostaria de reservar um quarto para duas noites em dezembro. Pode dizer-me se o pequeno-almoço está incluído e a que distância fica o hotel da estação?"}
+{"lang": "pt", "split": "train", "text": "O museu abre todos os dias, exceto às segundas-feiras, das nove da manhã às cinco da tarde. As crianças com menos de doze anos entram de graça quando acompanhadas por um adulto."}
+{"lang": "pt", "split": "train", "text": "Ela abriu a velha caixa de madeira e encontrou um monte de cartas amarradas com uma fita azul. Ninguém da família as via há mais de quarenta anos."}
+{"lang": "pt", "split": "train", "text": "Esta avaliação baseia-se na minha própria experiência com o produto. A bateria dura o dia todo, o ecrã é brilhante e o preço é justo para o que oferece."}
+{"lang": "it", "split": "train", "text": "Stamattina faceva freddo, così abbiamo messo i cappotti e siamo andati a piedi al mercato. Su ogni banco c'erano mele, pane e formaggio fresco, e il venditore ci ha accolti con un sorriso."}
+{"lang": "it", "split": "train", "text": "La nostra azienda offre la spedizione gratuita per tutti gli ordini superiori a cinquanta euro. Leggete l'informativa sulla privacy e le condizioni d'uso prima di creare un account."}
+{"lang": "it", "split": "train", "text": "Per installare il programma, scarica l'ultima versione dal sito, apri il file e segui le istruzioni sullo schermo. Se hai domande, contatta il nostro servizio clienti."}
+{"lang": "it", "split": "train", "text": "Martedì il consiglio comunale ha votato la costruzione di una nuova biblioteca vicino al fiume. Gli abitanti dicono che il progetto porterà più visitatori e aiuterà i negozi della zona."}
+{"lang": "it", "split": "train", "text": "Cuocere il riso è semplice: si lava due volte, si aggiungono due tazze d'acqua per ogni tazza di riso e si lascia sobbollire per circa quindici minuti con il coperchio chiuso."}
+{"lang": "it", "split": "train", "text": "Home, Chi siamo, Prodotti, Contatti, Accedi, Iscriviti alla newsletter, Note legali. Tutti i diritti riservati."}
+{"lang": "it", "split": "train", "text": "Mio fratello gioca a calcio con gli amici ogni fine settimana. Di solito si trovano al parco vicino a casa nostra e poi vanno tutti a mangiare una pizza."}
+{"lang": "it", "split": "train", "text": "Gli scienziati hanno scoperto che l'attività fisica regolare migliora il sonno, riduce lo stress e fa bene al cuore. Anche una breve passeggiata dopo cena aiuta."}
+{"lang": "it", "split": "train", "text": "Vorrei prenotare una camera per due notti a dicembre. Può dirmi se la colazione è inclusa e quanto dista l'albergo dalla stazione?"}
+{"lang": "it", "split": "train", "text": "Il museo è aperto tutti i giorni, tranne il lunedì, dalle nove del mattino alle cinque del pomeriggio. I bambini sotto i dodici anni entrano gratis se accompagnati da un adulto."}
+{"lang": "it", "split": "train", "text": "Lei aprì la vecchia scatola di legno e trovò un mucchio di lettere legate con un nastro azzurro. Nessuno in famiglia le vedeva da più di quarant'anni."}
+{"lang": "it", "split": "train", "text": "Questa recensione si basa sulla mia esperienza con il prodotto. La batteria dura tutto il giorno, lo schermo è luminoso e il prezzo è giusto per quello che offre."}
+{"lang": "en", "split": "test", "text": "The train to the coast leaves at noon and arrives before dinner."}
+{"lang": "en", "split": "test", "text": "Please enter your email address and choose a strong password."}
+{"lang": "en", "split": "test", "text": "Last summer we planted tomatoes, and the garden has never looked better."}
+{"lang": "en", "split": "test", "text": "How much does it cost to send this package to another country?"}
+{"lang": "en", "split": "test", "text": "He said that the meeting would be moved to next Thursday because of the holiday."}
+{"lang": "en", "split": "test", "text": "Click here to read more about our latest products and special offers."}
+{"lang": "zh", "split": "test", "text": "開往海邊的火車中午出發，傍晚之前就會到。"}
+{"lang": "zh", "split": "test", "text": "請輸入你的電子郵件地址，並設定一組安全的密碼。"}
+{"lang": "zh", "split": "test", "text": "去年夏天我們種了番茄，花園從來沒有這麼漂亮過。"}
+{"lang": "zh", "split": "test", "text": "寄這個包裹到國外要多少錢？"}
+{"lang": "zh", "split": "test", "text": "他說因為放假，會議要延到下週四。"}
+{"lang": "zh", "split": "test", "text": "点击这里了解更多最新产品和优惠活动。"}
+{"lang": "ja", "split": "test", "text": "海へ行く電車は正午に出て、夕食の前に着きます。"}
+{"lang": "ja", "split": "test", "text": "メールアドレスを入力して、安全なパスワードを設定してください。"}
+{"lang": "ja", "split": "test", "text": "去年の夏にトマトを植えたら、庭がこれまでで一番きれいになりました。"}
+{"lang": "ja", "split": "test", "text": "この荷物を海外に送るには、いくらかかりますか。"}
+{"lang": "ja", "split": "test", "text": "彼は、休日のため会議が来週の木曜日に変更になると言いました。"}
+{"lang": "ja", "split": "test", "text": "最新の商品とお得なキャンペーンについては、こちらをクリックしてください。"}
+{"lang": "ko", "split": "test", "text": "바다로 가는 기차는 정오에 출발해서 저녁 전에 도착합니다."}
+{"lang": "ko", "split": "test", "text": "이메일 주소를 입력하고 안전한 비밀번호를 정해 주세요."}
+{"lang": "ko", "split": "test", "text": "지난여름에 토마토를 심었더니 정원이 어느 때보다 예뻐졌습니다."}
+{"lang": "ko", "split": "test", "text": "이 소포를 외국으로 보내려면 얼마가 드나요?"}
+{"lang": "ko", "split": "test", "text": "그는 휴일 때문에 회의가 다음 주 목요일로 미뤄진다고 말했습니다."}
+{"lang": "ko", "split": "test", "text": "최신 제품과 특별 할인 행사를 보시려면 여기를 눌러 주세요."}
+{"lang": "ru", "split": "test", "text": "Поезд к морю отправляется в полдень и прибывает до ужина."}
+{"lang": "ru", "split": "test", "text": "Введите адрес электронной почты и придумайте надёжный пароль."}
+{"lang": "ru", "split": "test", "text": "Прошлым летом мы посадили помидоры, и сад никогда не выглядел лучше."}
+{"lang": "ru", "split": "test", "text": "Сколько стоит отправить эту посылку в другую страну?"}
+{"lang": "ru", "split": "test", "text": "Он сказал, что из-за праздника встреча переносится на следующий четверг."}
+{"lang": "ru", "split": "test", "text": "Нажмите здесь, чтобы узнать больше о наших новинках и специальных предложениях."}
+{"lang": "de", "split": "test", "text": "Der Zug zur Küste fährt mittags ab und kommt vor dem Abendessen an."}
+{"lang": "de", "split": "test", "text": "Bitte geben Sie Ihre E-Mail-Adresse ein und wählen Sie ein sicheres Passwort."}
+{"lang": "de", "split": "test", "text": "Letzten Sommer haben wir Tomaten gepflanzt, und der Garten sah nie schöner aus."}
+{"lang": "de", "split": "test", "text": "Wie viel kostet es, dieses Paket ins Ausland zu schicken?"}
+{"lang": "de", "split": "test", "text": "Er sagte, dass das Treffen wegen des Feiertags auf nächsten Donnerstag verschoben wird."}
+{"lang": "de", "split": "test", "text": "Klicken Sie hier, um mehr über unsere neuesten Produkte und Sonderangebote zu erfahren."}
+{"lang": "fr", "split": "test", "text": "Le train pour la côte part à midi et arrive avant le dîner."}
+{"lang": "fr", "split": "test", "text": "Veuillez saisir votre adresse électronique et choisir un mot de passe solide."}
+{"lang": "fr", "split": "test", "text": "L'été dernier, nous avons planté des tomates, et le jardin n'a jamais été aussi beau."}
+{"lang": "fr", "split": "test", "text": "Combien coûte l'envoi de ce colis à l'étranger ?"}
+{"lang": "fr", "split": "test", "text": "Il a dit que la réunion serait reportée à jeudi prochain à cause du jour férié."}
+{"lang": "fr", "split": "test", "text": "Cliquez ici pour en savoir plus sur nos derniers produits et nos offres spéciales."}
+{"lang": "es", "split": "test", "text": "El tren hacia la costa sale a mediodía y llega antes de la cena."}
+{"lang": "es", "split": "test", "text": "Introduzca su dirección de correo electrónico y elija una contraseña segura."}
+{"lang": "es", "split": "test", "text": "El verano pasado plantamos tomates y el jardín nunca había estado tan bonito."}
+{"lang": "es", "split": "test", "text": "¿Cuánto cuesta enviar este paquete a otro país?"}
+{"lang": "es", "split": "test", "text": "Dijo que la reunión se aplazaría hasta el próximo jueves por el día festivo."}
+{"lang": "es", "split": "test", "text": "Haga clic aquí para saber más sobre nuestros últimos productos y ofertas especiales."}
+{"lang": "pt", "split": "test", "text": "O comboio para a costa parte ao meio-dia e chega antes do jantar."}
+{"lang": "pt", "split": "test", "text": "Digite o seu endereço de e-mail e escolha uma senha forte."}
+{"lang": "pt", "split": "test", "text": "No verão passado plantámos tomates e o jardim nunca esteve tão bonito."}
+{"lang": "pt", "split": "test", "text": "Quanto custa enviar esta encomenda para o estrangeiro?"}
+{"lang": "pt", "split": "test", "text": "Ele disse que a reunião seria adiada para a próxima quinta-feira por causa do feriado."}
+{"lang": "pt", "split": "test", "text": "Clique aqui para saber mais sobre os nossos últimos produtos e ofertas especiais."}
+{"lang": "it", "split": "test", "text": "Il treno per la costa parte a mezzogiorno e arriva prima di cena."}
+{"lang": "it", "split": "test", "text": "Inserisci il tuo indirizzo email e scegli una password sicura."}
+{"lang": "it", "split": "test", "text": "L'estate scorsa abbiamo piantato i pomodori e il giardino non è mai stato così bello."}
+{"lang": "it", "split": "test", "text": "Quanto costa spedire questo pacco all'estero?"}
+{"lang": "it", "split": "test", "text": "Ha detto che la riunione sarà rimandata a giovedì prossimo a causa della festa."}
+{"lang": "it", "split": "test", "text": "Clicca qui per saperne di più sui nostri ultimi prodotti e sulle offerte speciali."}

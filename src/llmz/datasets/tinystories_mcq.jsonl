@@ -1,0 +1,105 @@
+{"split": "dev", "context": "Mia felt very sleepy after a long day, so she went to", "choices": [" the park to play.", " school.", " bed and closed her eyes.", " the store to buy a new hat for her dog."], "answer": 2}
+{"split": "dev", "context": "Ben dropped his ice cream on the ground. He felt", "choices": [" happy because it tasted so good.", " sad.", " like a big tall tree.", " very hot."], "answer": 1}
+{"split": "dev", "context": "The sun was shining and the sky was blue. Lily put on her hat and", "choices": [" went outside to play.", " took a long nap in her bed.", " jumped into the cold snow.", " ate her dinner."], "answer": 0}
+{"split": "dev", "context": "The little dog barked loudly because he wanted to", "choices": [" go for a walk.", " drive a car.", " read a big book.", " sing a song about the moon and the stars."], "answer": 0}
+{"split": "dev", "context": "Sam planted a tiny seed in the garden. Every day he gave it some", "choices": [" haircuts.", " socks.", " rides on his bike around the town.", " water."], "answer": 3}
+{"split": "test", "context": "Tom was very hungry, so he opened the fridge and ate a", "choices": [" blanket.", " sandwich.", " shoe.", " tree that was big and green."], "answer": 1}
+{"split": "test", "context": "Anna was thirsty after running in the sun. She poured a glass of", "choices": [" sand.", " red paint.", " rocks.", " cold water and drank it all."], "answer": 3}
+{"split": "test", "context": "Max wanted a snack, so his mom gave him an", "choices": [" empty box.", " old shoe with a hole in it.", " apple.", " umbrella."], "answer": 2}
+{"split": "test", "context": "The cake was in the oven. When it was ready, the whole kitchen smelled", "choices": [" cold.", " like a big wet dog.", " loud.", " sweet and yummy."], "answer": 3}
+{"split": "test", "context": "Sue was making soup for her family. She cut up some carrots and put them", "choices": [" on the roof.", " under the moon.", " in the pot.", " in her shoe."], "answer": 2}
+{"split": "test", "context": "Ben did not finish his soup because it was too", "choices": [" sleepy.", " wooden.", " tall.", " hot."], "answer": 3}
+{"split": "test", "context": "At the picnic, Lily shared her cookies with", "choices": [" her bed.", " her friends.", " a rock and a tree.", " the moon."], "answer": 1}
+{"split": "test", "context": "Sam spilled his milk on the table. His mom gave him a", "choices": [" song.", " new bike to ride down the big hill.", " towel to wipe it up.", " ball."], "answer": 2}
+{"split": "test", "context": "Lily lost her favorite toy, so she felt", "choices": [" like a big green tree.", " proud and happy.", " sad and started to cry.", " full of joy and laughed."], "answer": 2}
+{"split": "test", "context": "Ben won the race and his friends cheered for him. He felt very", "choices": [" lost and alone.", " proud.", " cold and sad.", " wooden."], "answer": 1}
+{"split": "test", "context": "Mia got a new puppy for her birthday. She was so", "choices": [" sleepy.", " red.", " angry that she threw it away.", " happy that she jumped up and down."], "answer": 3}
+{"split": "test", "context": "The thunder was very loud and the little cat was scared. It ran and hid", "choices": [" on the sun.", " under the bed.", " inside a cup of tea.", " in the clouds."], "answer": 1}
+{"split": "test", "context": "Tim broke his sister's toy by mistake. He told her he was", "choices": [" a tall tree.", " made of paper.", " happy that it broke and laughed.", " sorry."], "answer": 3}
+{"split": "test", "context": "It was Anna's birthday, and all her friends came to her party. She felt", "choices": [" lonely and sad because nobody came.", " tired of the sky.", " angry at the cake.", " happy."], "answer": 3}
+{"split": "test", "context": "Sam saw a big, scary dog running toward him. His heart beat fast and he felt", "choices": [" like a sweet cake.", " very calm and sleepy.", " silly because the dog was a flower.", " afraid."], "answer": 3}
+{"split": "test", "context": "Lily's grandma gave her a warm hug. Lily felt", "choices": [" safe and loved.", " like a hat.", " angry.", " scared of the soft bed."], "answer": 0}
+{"split": "test", "context": "The little bird could not fly because its wing was hurt. The kind boy", "choices": [" asked the moon for a sandwich.", " helped the bird get better.", " went to sleep.", " ran away and never came back."], "answer": 1}
+{"split": "test", "context": "Mom said it was time to clean up the toys, but Ben did not want to stop playing. He felt", "choices": [" very hot.", " a little upset.", " happy to stop.", " as green as grass."], "answer": 1}
+{"split": "test", "context": "It was raining outside, so Mia took her", "choices": [" swimsuit and sand toys.", " kite.", " umbrella.", " sunglasses."], "answer": 2}
+{"split": "test", "context": "The sun went down and the sky became dark. Soon the", "choices": [" stars came out.", " snow was hot.", " flowers sang loudly.", " sun came back up."], "answer": 0}
+{"split": "test", "context": "It was a cold winter day. Ben put on his coat and", "choices": [" gloves before going out to play in the snow.", " sunglasses and a straw hat.", " swimsuit.", " went to the beach to swim."], "answer": 0}
+{"split": "test", "context": "The flowers in the garden were dry and sad. Anna gave them some", "choices": [" shoes to wear.", " paper.", " water.", " toys."], "answer": 2}
+{"split": "test", "context": "The wind was so strong that Lily's hat flew", "choices": [" under the sea and ate fish.", " to sleep.", " cold.", " away."], "answer": 3}
+{"split": "test", "context": "A little bird built a nest in the tree. Then it laid some", "choices": [" eggs.", " cars and trucks.", " shoes.", " bricks."], "answer": 0}
+{"split": "test", "context": "The snow was soft and white. The children made a snowman and gave him a", "choices": [" hot soup.", " wheel.", " bed.", " carrot for a nose."], "answer": 3}
+{"split": "test", "context": "After the rain stopped, a pretty rainbow appeared", "choices": [" in the sky.", " under the table.", " in the soup.", " inside the shoe."], "answer": 0}
+{"split": "test", "context": "The sun was very hot, so the dog lay down in the", "choices": [" bath of hot soup.", " fire.", " shade.", " snow with his coat on."], "answer": 2}
+{"split": "test", "context": "At night, the moon was big and bright. Tom looked up and saw", "choices": [" the sun at lunch.", " the stars shining.", " his lunch box.", " a huge wave of ice cream."], "answer": 1}
+{"split": "test", "context": "The cat was sleeping on the sofa. Suddenly, a mouse ran by, and the cat", "choices": [" woke up and ran after it.", " turned into a tree.", " read a book.", " went to the shop."], "answer": 0}
+{"split": "test", "context": "The farmer got up early to feed the cows and the", "choices": [" cars.", " chickens.", " buildings and bridges.", " computers."], "answer": 1}
+{"split": "test", "context": "The duck jumped into the pond and began to", "choices": [" bake a cake in the kitchen.", " fly to the moon on a bike.", " swim.", " write a letter."], "answer": 2}
+{"split": "test", "context": "The puppy was tired after playing all day. It curled up on the rug and", "choices": [" fell asleep.", " went running up the tree.", " sang a loud song.", " started to play again with a big ball."], "answer": 0}
+{"split": "test", "context": "The little fish swam around in the", "choices": [" water.", " kitchen.", " big tree.", " sky."], "answer": 0}
+{"split": "test", "context": "The bear was cold and sleepy, so it went into its cave to", "choices": [" play in the hot sand.", " swim in the sea.", " sleep for the winter.", " paint a house."], "answer": 2}
+{"split": "test", "context": "The monkey climbed up the tall tree to get a", "choices": [" big pile of dirty socks.", " bowl of ice.", " banana.", " bike."], "answer": 2}
+{"split": "test", "context": "The horse was thirsty, so it walked to the river and", "choices": [" took a long bath in the sky.", " drank some water.", " flew away.", " played the drum."], "answer": 1}
+{"split": "test", "context": "The bees buzzed around the flowers because they wanted", "choices": [" to read books.", " sweet nectar.", " a new car.", " to go to school in the morning."], "answer": 1}
+{"split": "test", "context": "The mother bird fed the baby birds some", "choices": [" worms.", " ice cream cones.", " rocks.", " pieces of paper."], "answer": 0}
+{"split": "test", "context": "Tim was late for school, so he ran to the", "choices": [" bakery to buy a cow.", " bus stop.", " sea.", " moon."], "answer": 1}
+{"split": "test", "context": "In class, the teacher asked everyone to open their", "choices": [" sandwiches and drinks and cakes.", " books.", " eggs.", " cars."], "answer": 1}
+{"split": "test", "context": "After dinner, Lily brushed her teeth and put on her", "choices": [" pajamas.", " coat and boots for the snow.", " swim cap.", " helmet to ride her bike."], "answer": 0}
+{"split": "test", "context": "Dad was driving the car and saw a red light, so he", "choices": [" stopped the car.", " turned the car into a boat.", " jumped out and sang.", " drove faster."], "answer": 0}
+{"split": "test", "context": "Anna wanted to read a story, so she went to the", "choices": [" garage.", " bathroom to eat.", " garden to sleep.", " library and got a book."], "answer": 3}
+{"split": "test", "context": "The phone rang, and Mom picked it up and said", "choices": [" sorry to the rain.", " bread.", " goodnight to the stove.", " hello."], "answer": 3}
+{"split": "test", "context": "Ben wanted to play outside, but it was too dark, so his mom said they could play", "choices": [" in the sun.", " yesterday.", " tomorrow.", " now when the bright moon was gone."], "answer": 2}
+{"split": "test", "context": "Lily's shoes were dirty from the mud. She took them off and", "choices": [" washed them.", " ate them for dinner.", " gave them a haircut.", " put them in the sky."], "answer": 0}
+{"split": "test", "context": "Sam was learning to ride a bike. At first he fell down, but he tried again and", "choices": [" went to sleep.", " flew up in the air.", " again until he could do it.", " ate his helmet."], "answer": 2}
+{"split": "test", "context": "Mom gave Tom some money, and he went to the store to buy", "choices": [" some milk and bread.", " the moon.", " a hundred big trucks and a house.", " a wall."], "answer": 0}
+{"split": "test", "context": "The class went to the zoo. They saw a tall giraffe that was eating", "choices": [" a big blue ball.", " leaves from a tree.", " the school bus.", " a plate of spaghetti."], "answer": 1}
+{"split": "test", "context": "Anna's mom asked her to set the table, so Anna put out the", "choices": [" clouds.", " plates and forks.", " car and bike.", " shoes and socks."], "answer": 1}
+{"split": "test", "context": "Ben fell down and hurt his knee. His friend Sam came over and", "choices": [" helped him up.", " ate a cookie on his head.", " laughed at the sky.", " ran to the moon."], "answer": 0}
+{"split": "test", "context": "Lily and Mia wanted to play with the same doll, so they decided to", "choices": [" cook it.", " fly it to the roof.", " take turns.", " plant it in the garden."], "answer": 2}
+{"split": "test", "context": "The two boys built a big tower with blocks. Then the tower", "choices": [" grew into a tree.", " turned into a dog.", " fell down, and they laughed.", " began to sing."], "answer": 2}
+{"split": "test", "context": "Max kicked the ball very hard, and it went over the fence into the", "choices": [" cake.", " big pot of soup.", " moon.", " neighbor's yard."], "answer": 3}
+{"split": "test", "context": "The kids wanted to play hide and seek. Tom closed his eyes and counted", "choices": [" to the sky.", " to ten while the others hid.", " the sleepy sheep that were far away.", " backward from the moon."], "answer": 1}
+{"split": "test", "context": "Sue drew a picture of her family with her", "choices": [" shoes.", " soup.", " big brown trucks that were driving.", " crayons."], "answer": 3}
+{"split": "test", "context": "The children sat in a circle, and the teacher began to read a", "choices": [" cake.", " car.", " story.", " basket full of old, dry socks."], "answer": 2}
+{"split": "test", "context": "Lily was building a sandcastle at the beach when a big wave", "choices": [" turned it to gold.", " asked her for lunch.", " sang a song.", " came and washed it away."], "answer": 3}
+{"split": "test", "context": "Tim shared his new ball with the other kids, and soon they were all", "choices": [" sleeping on the floor.", " eating the ball.", " playing together.", " crying very hard."], "answer": 2}
+{"split": "test", "context": "Anna's kite was stuck in a tree. Her big brother climbed up and", "choices": [" fell asleep in the leaves for a week.", " ate it.", " painted the sun.", " got it down for her."], "answer": 3}
+{"split": "test", "context": "Sam was new at school and did not know anyone. A girl smiled at him and asked if he wanted to", "choices": [" play with her.", " paint the rain.", " be a table.", " sleep in the sink."], "answer": 0}
+{"split": "test", "context": "Ben's toy car would not move. He looked inside and saw that the", "choices": [" car was a banana.", " battery was gone.", " sky was dry.", " car had a tiny head."], "answer": 1}
+{"split": "test", "context": "An old man was carrying a heavy bag up the hill. Lily saw him and offered to", "choices": [" cook it.", " fly it away.", " carry it for him.", " sleep."], "answer": 2}
+{"split": "test", "context": "Mom was tired from work, so Ben made her a cup of", "choices": [" paper.", " tea.", " glue.", " mud."], "answer": 1}
+{"split": "test", "context": "The boy found a wallet on the road. He knew it was not his, so he", "choices": [" ate it.", " painted it green.", " put it on the roof of the house.", " gave it back to its owner."], "answer": 3}
+{"split": "test", "context": "Sue forgot her lunch at home. Her friend Anna saw this and", "choices": [" told her to go to the moon.", " ran away.", " shared her sandwich with her.", " took her sandwich away."], "answer": 2}
+{"split": "test", "context": "Dad fixed the broken chair with a hammer and some", "choices": [" milk.", " bubbles.", " clouds and water.", " nails."], "answer": 3}
+{"split": "test", "context": "The baby was crying, so Mom picked her up and sang a", "choices": [" song.", " chair.", " table.", " hammer."], "answer": 0}
+{"split": "test", "context": "Ben said sorry to his sister and she said it was", "choices": [" late for lunch.", " yellow.", " a pig.", " okay and gave him a hug."], "answer": 3}
+{"split": "test", "context": "The little girl was lost in the big store. She cried until a kind woman", "choices": [" ate a big cake.", " went to the moon.", " bought a car.", " found her mom."], "answer": 3}
+{"split": "test", "context": "When Tom saw trash on the ground at the park, he picked it up and put it in the", "choices": [" oven.", " bin.", " bed.", " sky."], "answer": 1}
+{"split": "test", "context": "Lily's mom was sick, so Lily made sure the house was quiet so she could", "choices": [" dance and shout.", " wake up the whole town.", " play the drums loudly.", " rest."], "answer": 3}
+{"split": "test", "context": "The new boy had no one to play with. Ben went over and said hello. Soon they were", "choices": [" very sleepy fish.", " big rocks.", " flying home.", " good friends."], "answer": 3}
+{"split": "test", "context": "Sam wanted a toy, but his mom said no. He was sad, but he said", "choices": [" no.", " okay and went to play.", " the toy was his lunch.", " nothing because he was a tree."], "answer": 1}
+{"split": "test", "context": "Lily wanted to go into the house, so she opened the door with her", "choices": [" nose.", " favorite blue sock.", " key.", " lunch."], "answer": 2}
+{"split": "test", "context": "Tom needed to cut the paper, so he got the", "choices": [" scissors.", " bed.", " soup.", " window."], "answer": 0}
+{"split": "test", "context": "The room was dark, so Mia turned on the", "choices": [" bird and the cat.", " light.", " water.", " sock."], "answer": 1}
+{"split": "test", "context": "Dad took out his tools to fix the broken", "choices": [" song.", " cloud.", " toy.", " milk."], "answer": 2}
+{"split": "test", "context": "Ben came home from the snow and put his wet coat in the", "choices": [" moon.", " soup.", " closet.", " radio and the phone."], "answer": 2}
+{"split": "test", "context": "The children went to the park, where they played on the", "choices": [" clock.", " shelf.", " swings.", " stove."], "answer": 2}
+{"split": "test", "context": "To see the stars better, Tom looked through his", "choices": [" telescope.", " spoon.", " sandwich.", " piano."], "answer": 0}
+{"split": "test", "context": "Anna wanted to call her grandma, so she used the", "choices": [" wall.", " shoe.", " tree.", " phone."], "answer": 3}
+{"split": "test", "context": "At the beach, Sam built a big castle out of", "choices": [" clouds.", " sand.", " soup.", " bread."], "answer": 1}
+{"split": "test", "context": "Mom put the baby in the crib because it was time for her", "choices": [" nap.", " bike ride.", " homework.", " big lunch."], "answer": 0}
+{"split": "test", "context": "The boat floated on the lake, and the little boy waved to the", "choices": [" lamp.", " table.", " snow people on the moon.", " fish."], "answer": 3}
+{"split": "test", "context": "The train goes along the tracks and stops at every", "choices": [" station.", " bath.", " cloud on the ground.", " shirt."], "answer": 0}
+{"split": "test", "context": "Ben used a big brush to paint the", "choices": [" sound.", " soup.", " fence.", " air."], "answer": 2}
+{"split": "test", "context": "To make the cake, Mom mixed the flour and eggs with", "choices": [" shoes.", " sugar in a big bowl.", " soap in a hat.", " rocks."], "answer": 1}
+{"split": "test", "context": "Lily put her coins in her piggy bank because she wanted to save her", "choices": [" bird.", " money.", " bed.", " house and the street."], "answer": 1}
+{"split": "test", "context": "The lamp fell off the table and broke into many", "choices": [" days.", " wishes.", " balloons.", " pieces."], "answer": 3}
+{"split": "test", "context": "Tom's team scored more goals than the other team, so they", "choices": [" ate the ball.", " lost the game.", " won the game.", " went to sleep in the goal."], "answer": 2}
+{"split": "test", "context": "Lily studied hard for the test, and when she got her paper back, it said she got a", "choices": [" bad dream and could not read.", " good grade.", " red hat.", " big spoon."], "answer": 1}
+{"split": "test", "context": "Ben saved his money for a long time. Finally, he had enough to buy the", "choices": [" rain.", " moon.", " bike he wanted.", " big sea."], "answer": 2}
+{"split": "test", "context": "It was almost bedtime. Mom read a story, and soon Anna's eyes got", "choices": [" heavy.", " green.", " loud.", " wide open and she ran to the garden."], "answer": 0}
+{"split": "test", "context": "The ice cream was left in the sun for a long time, and it began to", "choices": [" melt.", " sing.", " freeze solid and roll away.", " grow wings."], "answer": 0}
+{"split": "test", "context": "Sue wanted to be a doctor when she grew up, so she liked to help people who were", "choices": [" square.", " cars on the road.", " shoes.", " sick."], "answer": 3}
+{"split": "test", "context": "Max wanted to see his grandma, who lived far away, so his family drove", "choices": [" a long way to her house.", " around the table.", " to the bottom of the sea.", " in the sun."], "answer": 0}
+{"split": "test", "context": "There were five apples on the table. Tom ate one, so there were", "choices": [" four left.", " six now.", " none because they all had wings.", " ten left."], "answer": 0}
+{"split": "test", "context": "The girl wanted to see the whole town, so she climbed up to the top of the", "choices": [" fish.", " hill.", " soup.", " cup."], "answer": 1}
+{"split": "test", "context": "After the long walk, the boy's legs were tired, so he sat down on a", "choices": [" bench.", " cloud.", " lamp.", " piece of soup."], "answer": 0}

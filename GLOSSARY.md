@@ -46,7 +46,7 @@ TinyStories 訓練檔的固定切片，全書的訓練數字都以它為準（�
 
 ## 保留英文的核心術語
 
-第一次出現加一句中文釋義，之後直接用英文：token、tokenizer、BPE、embedding、attention、logits、softmax、loss、batch、checkpoint、RoPE、RMSNorm、SwiGLU、KV cache、scaling law、SFT、DPO、GRPO。
+第一次出現加一句中文釋義，之後直接用英文：token、tokenizer、BPE、embedding、attention、logits、softmax、loss、batch、checkpoint、RoPE、RMSNorm、SwiGLU、KV cache、scaling law、SFT、DPO、GRPO、policy、reward、advantage、baseline、REINFORCE、RLVR、Dr. GRPO、GSPO、vLLM。
 
 ## 台灣用語對照
 

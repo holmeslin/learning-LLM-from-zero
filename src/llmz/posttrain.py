@@ -1,0 +1,408 @@
+"""後訓練（第 14 章）：chat template 與 loss mask、帶 mask 的 SFT loss、程式產生的指令資料、SFT 訓練迴圈。"""
+
+import json
+import os
+import random
+import re
+import time
+import zlib
+from dataclasses import asdict, dataclass, field
+from typing import NamedTuple
+
+import torch
+from torch import Tensor, nn
+
+from llmz.evaluation import exact_match, sequence_logprob
+from llmz.functional import logsumexp
+from llmz.device import get_device
+from llmz.inference import generate_cached
+from llmz.model import ModelConfig, TransformerLM
+from llmz.optim import AdamW, clip_grad_norm_, lr_cosine_schedule
+from llmz.tokenizer import Tokenizer
+
+END = "<|endoftext|>"  # 標準語料的文件分隔符；在這裡當成「助理這一輪說完了」
+
+
+# ANCHOR: chat_template
+def chat_pieces(messages: list[dict], generation_prompt: bool = False) -> list[tuple[str, bool]]:
+    """訊息列表 -> [(文字, 要不要算 loss)]。只有助理的回覆（加上結尾 <|endoftext|>）算 loss，提示的部分都不算。
+
+    generation_prompt=True 時，最後多接一個 "Assistant:"，請模型從這裡開始寫回覆；平常訓練不用。
+    """
+    pieces = []
+    for message in messages:
+        if message["role"] == "user":
+            pieces.append((f"User: {message['content']}\n", False))
+        elif message["role"] == "assistant":
+            pieces += [("Assistant:", False), (f" {message['content']}{END}", True)]
+        else:
+            raise ValueError(f"不認得的 role：{message['role']}")
+    if generation_prompt:
+        pieces.append(("Assistant:", False))
+    return pieces
+
+
+def encode_chat(tokenizer, messages: list[dict], generation_prompt: bool = False) -> tuple[list[int], list[bool]]:
+    """訊息列表 -> (token id, loss mask)，兩個一樣長。每一段分開 encode 再接起來，mask 就是每段的 True 或 False 重複 token 數次。"""
+    ids, mask = [], []
+    for text, train in chat_pieces(messages, generation_prompt):
+        piece = tokenizer.encode(text)
+        ids += piece
+        mask += [train] * len(piece)
+    return ids, mask
+# ANCHOR_END: chat_template
+
+
+# ANCHOR: sft_loss
+def pad_batch(examples: list[tuple[list[int], list[bool]]]) -> tuple[Tensor, Tensor]:
+    """[(ids, mask), ...] -> ids (B, T)、mask (B, T)：短的往右補 0，補的位置 mask 是 False。
+    模型是 causal 的，右邊補的 token 不會影響左邊，所以不用另外遮。"""
+    longest = max(len(ids) for ids, _ in examples)
+    ids = torch.zeros(len(examples), longest, dtype=torch.long)
+    mask = torch.zeros(len(examples), longest, dtype=torch.bool)
+    for row, (example_ids, example_mask) in enumerate(examples):
+        ids[row, : len(example_ids)] = torch.tensor(example_ids)
+        mask[row, : len(example_mask)] = torch.tensor(example_mask)
+    return ids, mask
+
+
+def sft_loss(model: nn.Module, ids: Tensor, mask: Tensor) -> Tensor:
+    """mask 為 True 的 token 的平均 -log 機率（整個 batch 的 token 一起平均）。第 12 章的 sequence_logprob 加個負號、除以 token 數。
+    shortcut: mask 全是 False 時沒有 token 可算，分母用 1 擋掉除以 0，loss 是 0；真的遇到代表資料有問題，要自己檢查。"""
+    n_tokens = mask[:, 1:].sum().clamp(min=1)  # 第 0 個 token 沒有前文，永遠不算（和 sequence_logprob 一致）
+    return -sequence_logprob(model, ids, mask).sum() / n_tokens
+# ANCHOR_END: sft_loss
+
+
+# ANCHOR: task_makers
+class Task(NamedTuple):
+    kind: str  # "add"、"subtract"、"count"、"color"、"who"
+    question: str  # 使用者說的話
+    answer: str  # 標準答案，一個字
+
+
+NAMES = {"Tom": "He", "Ben": "He", "Sam": "He", "Max": "He", "Tim": "He", "Anna": "She", "Lily": "She", "Mia": "She", "Sue": "She", "Amy": "She"}
+THINGS = ["apple", "ball", "cookie", "toy", "flower", "book", "shell", "hat", "kite", "cup"]
+COLORS = ["red", "blue", "green", "yellow", "pink", "purple", "orange", "black", "white", "brown"]
+NUMBERS = "zero one two three four five six seven eight nine ten".split()
+
+
+def article(word: str) -> str:
+    return ("an " if word[0] in "aeiou" else "a ") + word  # an apple、a ball
+
+
+def some(n: int, thing: str) -> str:
+    return f"{NUMBERS[n]} {thing}" + ("" if n == 1 else "s")  # one apple、three apples
+
+
+def make_add(rng: random.Random) -> Task:
+    name, thing, a, b = rng.choice(list(NAMES)), rng.choice(THINGS), rng.randint(1, 5), rng.randint(1, 5)
+    question = f"{name} has {some(a, thing)}. {NAMES[name]} finds {NUMBERS[b]} more. How many {thing}s does {name} have now?"
+    return Task("add", question, NUMBERS[a + b])
+
+
+def make_subtract(rng: random.Random) -> Task:
+    name, other = rng.sample(list(NAMES), 2)
+    thing, a = rng.choice(THINGS), rng.randint(2, 10)
+    b = rng.randint(1, a - 1)
+    question = f"{name} has {some(a, thing)}. {NAMES[name]} gives {NUMBERS[b]} to {other}. How many {thing}s does {name} have left?"
+    return Task("subtract", question, NUMBERS[a - b])
+
+
+def make_count(rng: random.Random) -> Task:
+    name, k = rng.choice(list(NAMES)), rng.randint(2, 5)
+    items = [article(thing) for thing in rng.sample(THINGS, k)]
+    question = f"{name} has {', '.join(items[:-1])} and {items[-1]}. How many things does {name} have?"
+    return Task("count", question, NUMBERS[k])
+
+
+def make_color(rng: random.Random) -> Task:
+    name, (first, second), (c1, c2) = rng.choice(list(NAMES)), rng.sample(THINGS, 2), rng.sample(COLORS, 2)
+    asked = rng.randrange(2)
+    question = f"{name} has {article(c1)} {first} and {article(c2)} {second}. What color is the {(first, second)[asked]}?"
+    return Task("color", question, (c1, c2)[asked])
+
+
+def make_who(rng: random.Random) -> Task:
+    people, things = rng.sample(list(NAMES), 3), rng.sample(THINGS, 3)
+    asked = rng.randrange(3)
+    question = f"{people[0]} has {article(things[0])}, {people[1]} has {article(things[1])} and {people[2]} has {article(things[2])}. Who has the {things[asked]}?"
+    return Task("who", question, people[asked])
+# ANCHOR_END: task_makers
+
+
+# ANCHOR: task_api
+KINDS = {"add": make_add, "subtract": make_subtract, "count": make_count, "color": make_color, "who": make_who}
+
+
+def make_tasks(n: int, seed: int = 0, split: str = "train", kinds: tuple[str, ...] = tuple(KINDS)) -> list[Task]:
+    """依固定種子產生 n 題，kinds 裡的題型隨機混（預設五種都有）。每一題的答案都是「從題目的數字或名字直接算出來」的，所以可以自動檢查。
+
+    split 用題目文字的 crc32 決定：除以 10 餘 0 的題目是 "valid"，其他是 "train"。同一題不管用哪個種子產生，永遠在同一邊，
+    所以 train 與 valid 不會有一模一樣的題目（第 12 章第 5 集的污染問題）。
+    """
+    rng = random.Random(seed)
+    tasks = []
+    while len(tasks) < n:
+        task = KINDS[rng.choice(kinds)](rng)
+        if (zlib.crc32(task.question.encode()) % 10 == 0) == (split == "valid"):
+            tasks.append(task)
+    return tasks
+
+
+def task_messages(task: Task, with_answer: bool = False) -> list[dict]:
+    """題目轉成訊息列表；with_answer=True 時多接一則助理的回覆（SFT 的訓練資料）。"""
+    messages = [{"role": "user", "content": task.question}]
+    return messages + [{"role": "assistant", "content": task.answer}] if with_answer else messages
+
+
+def reward(task: Task, reply: str) -> float:
+    """答對 1.0、答錯 0.0。第 12 章的 exact_match：小寫、去標點與冠詞再比，所以 " Five." 也算對。"""
+    return float(exact_match(reply, task.answer))
+# ANCHOR_END: task_api
+
+
+# ANCHOR: replies
+def generate_replies(model: nn.Module, tokenizer, prompts: list[list[dict]], max_new_tokens: int = 8, temperature: float = 0.0) -> list[str]:
+    """每個 prompt（訊息列表）一則回覆，到 <|endoftext|> 為止（不含它）；一直沒寫出結尾就收到 max_new_tokens 個 token。
+    第 11 章的 generate_cached 要求一個 batch 的 prompt 一樣長，所以長度相同的 prompt 放在一起生成，最後照原本的順序排回去。
+    temperature 大於 0 就是取樣：同一個 prompt 重複放 G 次，就是一組 G 個回答。第 15 章要留下每個回答的 token id，回傳字串不夠用，所以另外寫了 rl.rollout。"""
+    device = next(model.parameters()).device
+    end_id = tokenizer.special_to_id[END]
+    encoded = [encode_chat(tokenizer, prompt, generation_prompt=True)[0] for prompt in prompts]
+    by_length: dict[int, list[int]] = {}
+    for i, ids in enumerate(encoded):
+        by_length.setdefault(len(ids), []).append(i)
+    replies = [""] * len(prompts)
+    for length, rows in by_length.items():
+        out = generate_cached(model, torch.tensor([encoded[i] for i in rows], device=device), max_new_tokens, temperature)
+        for i, new in zip(rows, out[:, length:].tolist()):
+            replies[i] = tokenizer.decode(new[: new.index(end_id)] if end_id in new else new)
+    return replies
+
+
+def accuracy(model: nn.Module, tokenizer, tasks: list[Task], max_new_tokens: int = 8) -> float:
+    """greedy 回答每一題，平均獎勵就是答對的比例。"""
+    replies = generate_replies(model, tokenizer, [task_messages(task) for task in tasks], max_new_tokens)
+    return sum(reward(task, reply) for task, reply in zip(tasks, replies)) / len(tasks)
+# ANCHOR_END: replies
+
+
+# ANCHOR: train_sft
+@dataclass
+class SFTConfig:
+    base_path: str = "runs/base/model.pt"  # 從第 5 章的標準模型開始；空字串 = 不載入，隨機初始化（smoke 用）
+    tokenizer_path: str = "data/tokenizer.json"
+    out_dir: str = "runs/sft"
+    model: ModelConfig = field(default_factory=ModelConfig)
+    n_train: int = 20000  # 訓練題數
+    n_valid: int = 200
+    batch_size: int = 32
+    max_steps: int = 1000
+    lr_max: float = 1e-4  # 微調的學習率比預訓練（1e-3）小得多
+    lr_min: float = 1e-5
+    warmup_steps: int = 20
+    weight_decay: float = 0.0
+    grad_clip: float = 1.0
+    log_every: int = 50
+    eval_every: int = 250
+    mask: bool = True  # False：整串都算 loss（第 2 集的對照實驗）
+    seed: int = 0
+    device: str = ""  # 空字串代表用 get_device()
+
+
+def train_sft(cfg: SFTConfig, tokenizer=None) -> list[dict]:
+    """SFT 主迴圈：和第 5 章的 train 一樣的五步，差在資料是 (ids, mask) 而不是隨機切的文字，loss 換成 sft_loss。回傳 log 紀錄。"""
+    torch.manual_seed(cfg.seed)
+    device = torch.device(cfg.device) if cfg.device else get_device()
+    os.makedirs(cfg.out_dir, exist_ok=True)
+    tokenizer = tokenizer or Tokenizer.load(cfg.tokenizer_path)
+    train_tasks = make_tasks(cfg.n_train, seed=cfg.seed, split="train")
+    valid_tasks = make_tasks(cfg.n_valid, seed=cfg.seed + 1, split="valid")
+    train_set = [encode_chat(tokenizer, task_messages(t, with_answer=True)) for t in train_tasks]
+    if not cfg.mask:
+        train_set = [(ids, [True] * len(ids)) for ids, _ in train_set]
+    valid_ids, valid_mask = pad_batch([encode_chat(tokenizer, task_messages(t, with_answer=True)) for t in valid_tasks])
+
+    model = TransformerLM(cfg.model).to(device)
+    if cfg.base_path:
+        model.load_state_dict(torch.load(cfg.base_path, map_location=device))
+    optimizer = AdamW(model.parameters(), lr=cfg.lr_max, weight_decay=cfg.weight_decay)
+    rng = random.Random(cfg.seed)
+    records, log_file, t0 = [], open(os.path.join(cfg.out_dir, "log.jsonl"), "w"), time.time()
+    for step in range(1, cfg.max_steps + 1):
+        lr = lr_cosine_schedule(step, cfg.lr_max, cfg.lr_min, cfg.warmup_steps, cfg.max_steps)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        ids, mask = pad_batch(rng.sample(train_set, cfg.batch_size))
+        loss = sft_loss(model, ids.to(device), mask.to(device))
+        loss.backward()
+        grad_norm = clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if step % cfg.log_every == 0 or step == cfg.max_steps:
+            rec = {"step": step, "loss": round(loss.item(), 4), "lr": lr, "grad_norm": round(grad_norm.item(), 3), "time": round(time.time() - t0, 1)}
+            if step % cfg.eval_every == 0 or step == cfg.max_steps:
+                model.eval()
+                with torch.no_grad():  # 驗證 loss 一律只算回覆，不管訓練時有沒有套 mask，數字才能比
+                    rec["val_loss"] = round(sft_loss(model, valid_ids.to(device), valid_mask.to(device)).item(), 4)
+                rec["val_accuracy"] = accuracy(model, tokenizer, valid_tasks)
+                model.train()
+            records.append(rec)
+            log_file.write(json.dumps(rec) + "\n")
+            log_file.flush()
+            print(rec)
+    log_file.close()
+    torch.save(model.state_dict(), os.path.join(cfg.out_dir, "model.pt"))
+    with open(os.path.join(cfg.out_dir, "config.json"), "w") as f:
+        json.dump(asdict(cfg), f, indent=2)
+    return records
+# ANCHOR_END: train_sft
+
+
+# ANCHOR: bradley_terry
+def bradley_terry_loss(r_chosen: Tensor, r_rejected: Tensor) -> Tensor:
+    """Bradley–Terry：好回答贏的機率是 sigmoid(r_chosen - r_rejected)，loss 是它的 -log，整批取平均。
+    -log sigmoid(x) = log(1 + e^-x) = logsumexp([0, -x])，用第 1 章的 logsumexp 算，x 很大或很小都不會溢位。"""
+    margin = r_chosen - r_rejected
+    return logsumexp(torch.stack([torch.zeros_like(margin), -margin]), dim=0).mean()
+# ANCHOR_END: bradley_terry
+
+
+# ANCHOR: dpo_loss
+def dpo_loss(policy_chosen: Tensor, policy_rejected: Tensor, ref_chosen: Tensor, ref_rejected: Tensor, beta: float = 0.1) -> Tensor:
+    """DPO：四個都是整段回覆的 log 機率 (B,)。policy 相對 reference 的 log 比值乘上 beta，就是「隱含的獎勵」，
+    再丟進 Bradley–Terry loss。policy 還沒離開 reference（兩個 log 比值都是 0）時，loss 是 log 2。"""
+    implicit_chosen = beta * (policy_chosen - ref_chosen)
+    implicit_rejected = beta * (policy_rejected - ref_rejected)
+    return bradley_terry_loss(implicit_chosen, implicit_rejected)
+# ANCHOR_END: dpo_loss
+
+
+# ANCHOR: preference_data
+class Pair(NamedTuple):
+    kind: str
+    question: str
+    chosen: str  # 標準答案
+    rejected: str  # 同一題的另一個候選：錯的
+
+
+def wrong_answers(task: Task) -> list[str]:
+    """這一題的錯誤答案：color 與 who 是題目裡出現的其他顏色與名字（答案一定在題目裡，所以「錯」也要是題目裡的東西），其他題型是別的數字。"""
+    pool = {"color": COLORS, "who": list(NAMES)}.get(task.kind, NUMBERS)
+    if task.kind in ("color", "who"):
+        pool = [w for w in pool if w in re.findall(r"\w+", task.question)]
+    return [w for w in pool if w != task.answer]
+
+
+def make_preferences(n: int, seed: int = 0, split: str = "train", kinds: tuple[str, ...] = tuple(KINDS)) -> list[Pair]:
+    """和 make_tasks 一樣的題目（同樣的 seed、split、kinds），每一題配一個隨機挑的錯誤答案。"""
+    rng = random.Random(seed)
+    return [Pair(t.kind, t.question, t.answer, rng.choice(wrong_answers(t))) for t in make_tasks(n, seed, split, kinds)]
+# ANCHOR_END: preference_data
+
+
+# ANCHOR: pair_logprobs
+def pair_batch(tokenizer, pairs: list[Pair]) -> tuple[Tensor, Tensor]:
+    """每個 Pair 排成兩條對話（題目相同，回覆一個是 chosen、一個是 rejected），疊成 (2B, T)：前 B 列是 chosen，後 B 列是 rejected。"""
+    examples = [encode_chat(tokenizer, task_messages(Task(p.kind, p.question, getattr(p, side)), with_answer=True)) for side in ("chosen", "rejected") for p in pairs]
+    return pad_batch(examples)
+
+
+def pair_logprobs(model: nn.Module, ids: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
+    """pair_batch 的結果 -> 每個 Pair 的 chosen 與 rejected 回覆的 log 機率，各 (B,)。有梯度。"""
+    return sequence_logprob(model, ids, mask).chunk(2)
+
+
+@torch.no_grad()
+def preference_rate(model: nn.Module, tokenizer, pairs: list[Pair], chunk: int = 50) -> float:
+    """模型給 chosen 的 log 機率比 rejected 高的 Pair 佔幾成（平手不算）。每次只算 chunk 個 Pair，logits 太大會爆記憶體。"""
+    device = next(model.parameters()).device
+    wins = 0
+    for start in range(0, len(pairs), chunk):
+        ids, mask = pair_batch(tokenizer, pairs[start : start + chunk])
+        chosen, rejected = pair_logprobs(model, ids.to(device), mask.to(device))
+        wins += int((chosen > rejected).sum())
+    return wins / len(pairs)
+# ANCHOR_END: pair_logprobs
+
+
+# ANCHOR: train_dpo
+@dataclass
+class DPOConfig:
+    sft_path: str = "runs/sft/model.pt"  # policy 與 reference 都從這裡開始；空字串 = 隨機初始化（smoke 用）
+    tokenizer_path: str = "data/tokenizer.json"
+    out_dir: str = "runs/dpo"
+    model: ModelConfig = field(default_factory=ModelConfig)
+    kinds: str = "color,who"  # 偏好資料的題型，逗號分隔
+    n_train: int = 20000  # 訓練的 Pair 數
+    n_valid: int = 200
+    batch_size: int = 32
+    max_steps: int = 1000
+    beta: float = 0.1
+    lr_max: float = 5e-5  # 比 SFT 的 1e-4 小：太大時 policy 一下子離 reference 太遠，回答整個壞掉（第 5 集量過）
+    lr_min: float = 5e-6
+    warmup_steps: int = 20
+    grad_clip: float = 1.0
+    log_every: int = 50
+    eval_every: int = 250
+    seed: int = 0
+    device: str = ""  # 空字串代表用 get_device()
+
+
+def train_dpo(cfg: DPOConfig, tokenizer=None) -> list[dict]:
+    """DPO 主迴圈：和 train_sft 一樣的五步，差在每步要多算一次凍結的 reference（沒梯度），loss 換成 dpo_loss。回傳 log 紀錄。"""
+    torch.manual_seed(cfg.seed)
+    device = torch.device(cfg.device) if cfg.device else get_device()
+    os.makedirs(cfg.out_dir, exist_ok=True)
+    tokenizer = tokenizer or Tokenizer.load(cfg.tokenizer_path)
+    kinds = tuple(cfg.kinds.split(","))
+    train_pairs = make_preferences(cfg.n_train, seed=cfg.seed, split="train", kinds=kinds)
+    valid_pairs = make_preferences(cfg.n_valid, seed=cfg.seed + 1, split="valid", kinds=kinds)
+    valid_tasks = make_tasks(cfg.n_valid, seed=cfg.seed + 1, split="valid", kinds=kinds)
+
+    model = TransformerLM(cfg.model).to(device)
+    if cfg.sft_path:
+        model.load_state_dict(torch.load(cfg.sft_path, map_location=device))
+    reference = TransformerLM(cfg.model).to(device)
+    reference.load_state_dict(model.state_dict())  # 起點一樣；之後 policy 會動，reference 不動
+    reference.eval()
+    optimizer = AdamW(model.parameters(), lr=cfg.lr_max, weight_decay=0.0)
+    rng = random.Random(cfg.seed)
+    records, log_file, t0 = [], open(os.path.join(cfg.out_dir, "log.jsonl"), "w"), time.time()
+    for step in range(1, cfg.max_steps + 1):
+        lr = lr_cosine_schedule(step, cfg.lr_max, cfg.lr_min, cfg.warmup_steps, cfg.max_steps)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        ids, mask = pair_batch(tokenizer, rng.sample(train_pairs, cfg.batch_size))
+        ids, mask = ids.to(device), mask.to(device)
+        with torch.no_grad():
+            ref_chosen, ref_rejected = pair_logprobs(reference, ids, mask)
+        policy_chosen, policy_rejected = pair_logprobs(model, ids, mask)
+        loss = dpo_loss(policy_chosen, policy_rejected, ref_chosen, ref_rejected, cfg.beta)
+        loss.backward()
+        grad_norm = clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if step % cfg.log_every == 0 or step == cfg.max_steps:
+            rec = {"step": step, "loss": round(loss.item(), 4), "lr": lr, "grad_norm": round(grad_norm.item(), 3), "time": round(time.time() - t0, 1),
+                   "chosen_gain": round((policy_chosen - ref_chosen).mean().item(), 3),  # policy 比 reference 多給 chosen 幾個 log 機率
+                   "rejected_gain": round((policy_rejected - ref_rejected).mean().item(), 3),
+                   "train_preference": (policy_chosen > policy_rejected).float().mean().item()}
+            if step % cfg.eval_every == 0 or step == cfg.max_steps:
+                model.eval()
+                rec["val_preference"] = preference_rate(model, tokenizer, valid_pairs)
+                rec["val_accuracy"] = accuracy(model, tokenizer, valid_tasks)
+                model.train()
+            records.append(rec)
+            log_file.write(json.dumps(rec) + "\n")
+            log_file.flush()
+            print(rec)
+    log_file.close()
+    torch.save(model.state_dict(), os.path.join(cfg.out_dir, "model.pt"))
+    with open(os.path.join(cfg.out_dir, "config.json"), "w") as f:
+        json.dump(asdict(cfg), f, indent=2)
+    return records
+# ANCHOR_END: train_dpo

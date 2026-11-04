@@ -16,7 +16,7 @@
 
 位置 i 的輸出 = 用 \\( q_i \\) 和所有 \\( k_j \\) 算相似度（點積），softmax 成權重，再把所有 \\( v_j \\) 照權重加起來：
 
-\\[ \text{attention}(Q, K, V) = \text{softmax}\!\left(\frac{Q K^\top}{\sqrt{d}}\right) V \\]
+\\[ \text{attention}(Q, K, V) = \text{softmax}\\!\left(\frac{Q K^\top}{\sqrt{d}}\right) V \\]
 
 Q 是 `(T, d)`，\\( QK^\top \\) 是 `(T, T)`：第 i 列第 j 欄是位置 i 看位置 j 的分數。softmax 沿最後一個維度（每一列加總為 1），再乘 `(T, d_v)` 的 V 得到 `(T, d_v)`。
 

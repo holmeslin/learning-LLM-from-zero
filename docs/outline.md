@@ -61,7 +61,10 @@ a CUDA 與 Triton 入門指引（選讀）· b 對照 CS336 A2、A3
 01 Common Crawl 與 WARC · 02 HTML 轉文字 · 03 語言辨識 · 04 PII 遮蔽 · 05 有害內容分類 · 06 Gopher 品質規則 · 07 品質分類器 · 08 exact dedup · 09 MinHash + LSH · 10 組成資料管線 · 11 資料混合與合成資料（敘述）
 
 ## 第 14 章 後訓練：SFT 與偏好學習
-01 base model vs 指令模型 · 02 chat template 與 loss mask · 03 SFT 玩具版 · 04 reward model 的想法 · 05 DPO 推導與玩具版實作
+01 base model 與指令模型 · 02 chat template 與 loss mask · 03 SFT 玩具版 · 04 reward model 的想法 · 05 DPO 推導與玩具版實作
 
 ## 第 15 章 後訓練：RL 與可驗證獎勵
-01 policy gradient 直覺 · 02 REINFORCE 玩具版 · 03 GRPO 的 group-relative advantage · 04 GRPO loss 實作與測試 · 05 RLVR · 06 Dr. GRPO、GSPO 一瞥 · 07 vLLM rollout（選讀：需 GPU）
+01 policy gradient 直覺 · 02 REINFORCE 玩具版 · 03 GRPO 的 group-relative advantage · 04 GRPO loss 實作與測試 · 05 RLVR：用可驗證獎勵訓練 SFT 模型 · 06 Dr. GRPO、GSPO 一瞥 · 07 vLLM rollout（選讀：需 GPU）
+
+## 附錄三
+a 對照 CS336 A4、A5

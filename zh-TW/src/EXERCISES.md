@@ -1980,7 +1980,7 @@ for b in [16, 32, 100]:
 
 **題目**
 
-驗證 \\( D_i = \sum_j P_{ij}\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
+驗證 \\( D_i = \sum_j P_{ij}\\, dP_{ij} \\) 和 \\( dO_i \cdot O_i \\) 相等：隨機產生 `q`、`k`、`v`（長度 6、4 維）和 `do`，算出完整的 `P`、`O = P @ v`、`dP = do @ v.T`，比較兩種算法。
 
 **練習目標**：理解為什麼 backward 不需要整列的 `P` 也能算 \\( D \\)。
 
@@ -2252,7 +2252,7 @@ print(m)
 
 **練習目標**：比值公式的推導，位元組數從 2 換成 4。
 
-**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
+**批改重點**：float32 時通訊量加倍，比值變成 \\( 0.75\\, BT \cdot \text{BW} / F \\)，門檻是 \\( F / (0.75\\,\text{BW}) \\)，約 2.7 萬個 token，是第 5 章一步 8192 個 token 的三倍多。
 
 **參考答案**
 
@@ -2566,3 +2566,1005 @@ print(blocks * threads // 32, "個 warp")
 
 純對照表。
 
+## 第 12 章 評估
+
+### 第 1 集 perplexity 的限制 — 狀態：可用
+
+**題目**
+
+同一段 600 bytes 的文字，模型 A 的 tokenizer 把它切成 150 個 token，總 \\( -\log p \\) 是 345 nat；模型 B 的 tokenizer 切成 100 個 token，總 \\( -\log p \\) 是 310 nat。算出兩個模型每個 token 的 perplexity 與 bits/byte。誰比較好？
+
+**練習目標**：perplexity 的單位是每個 token，不同 tokenizer 要換成 bits/byte 才能比。
+
+**批改重點**：A 的 perplexity 9.97、B 是 22.20，只看 perplexity 會選 A；但 bits/byte A 是 0.830、B 是 0.745，B 其實比較好。bits/byte 是總 \\( -\log p \\) 除以 byte 數，再除以 \\( \ln 2 \\)。
+
+**參考答案**
+
+```python
+import math
+
+models = {"A": (150, 345.0), "B": (100, 310.0)}  # (token 數, 總 -log 機率 nat)
+for name, (n_tokens, nll) in models.items():
+    print(f"模型 {name}：每個 token 的 perplexity {math.exp(nll / n_tokens):.2f}，{nll / 600 / math.log(2):.3f} bits/byte")
+```
+
+### 第 2 集 benchmark 與 few-shot — 狀態：可用
+
+**題目**
+
+四選一的題庫，隨機猜測的準確率是 25%，標準差是 \\( \sqrt{p(1-p)/n} \\)（\\( n \\) 是題數）。題數是 100、400、1000、4000 時標準差各是幾個百分點？至少要幾題，標準差才會小於等於 1 個百分點？
+
+**練習目標**：題數決定分數的雜訊，100 題的題庫分不出差幾個百分點的兩個模型。
+
+**批改重點**：100 題 4.33、400 題 2.17、1000 題 1.37、4000 題 0.68 個百分點；\\( 0.1875 / 0.01^2 = 1875 \\) 題。
+
+**參考答案**
+
+```python
+p = 0.25  # 四選一亂猜的準確率
+for n in [100, 400, 1000, 1875, 4000]:
+    print(f"{n} 題：標準差 {(p * (1 - p) / n) ** 0.5 * 100:.2f} 個百分點")
+```
+
+### 第 3 集 loglikelihood 評多選題 — 狀態：可用
+
+**題目**
+
+兩個選項的總 log 機率是 \\( -5 \\)（1 個 token）與 \\( -6 \\)（4 個 token）。把分數改成 \\( \log p / \text{長度}^\alpha \\)，\\( \alpha = 0 \\) 是總和，\\( \alpha = 1 \\) 是每個 token 的平均。\\( \alpha \\) 從 0 開始每次加 0.05，第一次改選第二個選項是在哪裡？
+
+**練習目標**：長度正規化是一個連續的旋鈕，不是兩種截然不同的算法；`pick_choice` 的 `lengths` 可以傳任何分母。
+
+**批改重點**：\\( \alpha = 0.15 \\) 時第一次改選第二個。精確的門檻是 \\( \ln 1.2 / \ln 4 \approx 0.1315 \\)：在這之後 \\( -6/4^\alpha \\) 比 \\( -5 \\) 大。提示：把 `lengths ** alpha` 傳給 `pick_choice`。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.evaluation import pick_choice
+
+logprobs = torch.tensor([-5.0, -6.0])  # 第一個選項 1 個 token，第二個 4 個 token
+lengths = torch.tensor([1.0, 4.0])
+alphas = [i / 20 for i in range(21)]  # 0, 0.05, ..., 1
+flip = next(a for a in alphas if pick_choice(logprobs, lengths**a) == 1)
+print(f"alpha = {flip} 時第一次改選第二個選項（精確的門檻 {math.log(1.2) / math.log(4):.4f}）")
+```
+
+### 第 4 集 生成式評估與 LLM-as-judge — 狀態：可用
+
+**題目**
+
+寫一個比 `exact_match` 寬鬆的 `contains_match(prediction, reference)`：兩邊各自正規化（`normalize_answer`）之後，只要標準答案的字連續出現在預測裡就算對（要以整個字為單位，`cat` 不能算在 `scattered` 裡）。對下面 5 組（預測，標準答案）各印出 `exact_match` 與 `contains_match` 的結果，說明放寬之後多出來的「對」有沒有誤判：
+
+1. `"A red ball."`、`"red ball"`
+2. `"water, and then he drank it all"`、`"water"`
+3. `"I do not like the park"`、`"like the park"`
+4. `"scattered"`、`"cat"`
+5. `"cold"`、`"cold water"`
+
+**練習目標**：放寬評分規則換來的是另一種錯誤；exact match 太嚴，包含式又太鬆。
+
+**批改重點**：第 1 組兩個都對；第 2 組只有 contains 對，而且是合理的（答案確實在裡面）；第 3 組 contains 也對，但這是誤判：句子的意思是不喜歡，包含式看不出否定；第 4、5 組兩個都錯。提示：正規化之後在兩邊各加一個空格再用 `in`，就能以整個字比對。
+
+**參考答案**
+
+```python
+from llmz.evaluation import exact_match, normalize_answer
+
+
+def contains_match(prediction: str, reference: str) -> bool:
+    return f" {normalize_answer(reference)} " in f" {normalize_answer(prediction)} "  # 兩邊加空格：只算整個字
+
+
+pairs = [
+    ("A red ball.", "red ball"),
+    ("water, and then he drank it all", "water"),
+    ("I do not like the park", "like the park"),
+    ("scattered", "cat"),
+    ("cold", "cold water"),
+]
+for prediction, reference in pairs:
+    print(f"{prediction!r} 對 {reference!r}：exact {exact_match(prediction, reference)}，contains {contains_match(prediction, reference)}")
+```
+
+### 第 5 集 資料污染 — 狀態：可用
+
+**題目**
+
+在隨機 token 組成的 5000 個 token 的「語料」裡，取一段長度 40 的 token 當題目，把正中間（第 20 個）token 換成語料裡不會出現的值 `99999`。分別用 \\( n = 13 \\)、8、5 查，印出 `contamination_rate`，再手算：為什麼是這些數字？接著對一段長度只有 20 的題目做同樣的事，\\( n = 13 \\) 的結果是多少？
+
+**練習目標**：只改一個 token，就會讓包含它的至多 \\( n \\) 個 n-gram 都查不到；題目越短、\\( n \\) 越大，剩下能偵測的越少。
+
+**批改重點**：長度 40 有 \\( 40 - n + 1 \\) 個 n-gram，包含中間那個 token 的有 \\( n \\) 個，所以比例是 \\( (28 - 13)/28 = 0.5357 \\)（\\( n = 13 \\)）、\\( 25/33 = 0.7576 \\)（\\( n = 8 \\)）、\\( 31/36 = 0.8611 \\)（\\( n = 5 \\)）。長度 20 時 \\( n = 13 \\) 只有 8 個 n-gram，每一個都包含中間那個 token，比例是 0：改一個 token 就整題逃過 13-gram 偵測。\\( n = 8 \\) 是 \\( 5/13 = 0.3846 \\)，\\( n = 5 \\) 是 \\( 11/16 = 0.6875 \\)。
+
+**參考答案**
+
+```python
+import numpy as np
+
+from llmz.evaluation import contamination_rate, ngram_index
+
+rng = np.random.default_rng(0)
+corpus = rng.integers(0, 10000, 5000)  # 假裝這是訓練集
+for length in [40, 20]:
+    edited = corpus[1000 : 1000 + length].copy()  # 從語料裡抄一段當題目
+    edited[length // 2] = 99999  # 換掉正中間一個 token，這個值語料裡不會有
+    for n in [13, 8, 5]:
+        print(f"長度 {length}，n = {n}：{contamination_rate(edited, ngram_index(corpus, n), n):.4f}")
+```
+
+## 第 13 章 資料：從網頁到訓練集
+
+### 第 1 集 Common Crawl 與 WARC — 狀態：可用
+
+**題目**
+
+WARC 檔裡每一筆記錄都是自己的一段 gzip，所以知道一筆記錄在檔案裡的起點（offset）與長度（length），就能只讀那一段，不必從頭讀。自己造一個 3 筆記錄的 `.warc.gz`（記錄內容自己編），記下每一段壓縮後的長度，寫一個函式 `read_at(path, offset, length)`：只讀檔案裡那一段 byte，用 `gzip.decompress` 解開，回傳記錄的原始 bytes。用它單獨讀出第 2 筆，印出它的 `WARC-Type`。
+
+**練習目標**：每筆記錄是獨立的 gzip 段，所以能用 Range 只取一筆；Common Crawl 的索引就是這樣用的。
+
+**批改重點**：第 2 筆的 offset 是前面所有段的壓縮後長度加起來，length 是它自己壓縮後的長度（不是解壓縮後的長度）；用 `f.seek(offset)` 與 `f.read(length)` 讀；讀出來的是 `WARC-Type: request`。提示：`gzip.compress` 回傳的 bytes 長度就是這一段在檔案裡佔的長度。常見錯誤：把整個檔案餵給 `gzip.decompress`，得到的是全部記錄接在一起。
+
+**參考答案**
+
+```python
+import gzip
+
+
+def read_at(path, offset, length):
+    with open(path, "rb") as f:
+        f.seek(offset)
+        return gzip.decompress(f.read(length))  # 這一段自己就是完整的 gzip
+
+
+members = []
+for warc_type in ["warcinfo", "request", "response"]:
+    body = f"toy {warc_type} content".encode()
+    head = f"WARC/1.0\r\nWARC-Type: {warc_type}\r\nContent-Length: {len(body)}\r\n\r\n".encode()
+    members.append(gzip.compress(head + body + b"\r\n\r\n"))
+with open("toy.warc.gz", "wb") as f:
+    f.write(b"".join(members))
+
+offset, length = len(members[0]), len(members[1])  # 第 2 筆：前面各段的長度加起來，就是它的起點
+record = read_at("toy.warc.gz", offset, length)
+print(f"offset {offset}，length {length}")
+print(record.split(b"\r\n")[1].decode())
+```
+
+### 第 2 集 HTML 轉文字 — 狀態：可用
+
+**題目**
+
+先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/sample.warc.gz`。用 `html_to_text` 的 `skip_tags` 參數，量出 `select`、`nav`、`footer`、`aside` 各自單獨加進 `{"script", "style", "noscript", "template", "svg", "iframe", "title"}` 之後，在那 842 頁 HTML 上多丟了幾個字元。哪一個標籤丟得最多？四個數字加起來，和第 2 集「一起丟」多丟的 506,589 個字元一樣嗎？為什麼？
+
+**練習目標**：用 `skip_tags` 參數做消融實驗，並看到標籤會巢狀、互相重疊。
+
+**批改重點**：`select` 125,562、`nav` 149,723、`footer` 117,575、`aside` 170,507 個字元，`aside` 最多；四個加起來是 563,367，比一起丟的 506,589 多。因為標籤可以巢狀（例如 `footer` 裡面再放一個 `nav`）：同一段文字在兩個要丟的標籤裡面時，各自單獨量每個都算了一次，一起丟時只算一次。提示：`html_to_text(html, skip_tags=...)`，集合可以用 `base | {tag}` 加一個標籤。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import decode_html, html_to_text, iter_warc_records, split_http_response
+
+htmls = []
+for headers, body in iter_warc_records("data/cc/sample.warc.gz"):
+    if headers["warc-type"] == "response":
+        status, http_headers, payload = split_http_response(body)
+        if status == 200 and "html" in http_headers.get("content-type", "").lower():
+            htmls.append(decode_html(payload, http_headers["content-type"]))
+
+base = {"script", "style", "noscript", "template", "svg", "iframe", "title"}
+before = sum(len(html_to_text(h, base)) for h in htmls)
+for tag in ["select", "nav", "footer", "aside"]:
+    after = sum(len(html_to_text(h, base | {tag})) for h in htmls)
+    print(f"{tag}：多丟 {before - after:,} 個字元")
+```
+
+### 第 3 集 語言辨識 — 狀態：可用
+
+**題目**
+
+第 3 集的 `train_langid` 預設 `n=3`、`alpha=0.1`，是隨手選的。把 `n` 換成 1、2、3、4，`alpha` 換成 0.01、0.1、1.0，共 12 組，各自量三個數字：60 句測試句的正確數；在 318 頁「一半以上是韓文、漢字或西里爾字母」的網頁上，整頁分類與 `predict_lines` 逐行投票各對幾頁（正解用書寫系統判斷，做法見第 3 集）。`n=1`（只看單一字元）夠用嗎？哪一個設定你會選？
+
+**練習目標**：用 `NGramClassifier.train(samples, n, alpha)` 做超參數的比較，並看到「測試集全對」與「真實網頁上的表現」會給出不同的結論。
+
+**批改重點**：測試句在 `n >= 3` 時全對（60/60），`n = 1` 是 59/60（`alpha = 1.0` 時 56/60）；可是在 318 頁網頁上，整頁分類反而是 `n = 1` 最好（`alpha = 0.01` 時 280 頁，`n = 3`、`alpha = 0.1` 是 245 頁），`alpha` 愈大愈差；逐行投票幾乎不受影響（303 到 311 頁）。可能的原因：網頁上的中文字多半在訓練資料裡只出現一兩次，`n` 愈大，能對上的片段愈少；整頁分類又很容易被認得的英文片段拉走；逐行投票把後面這個問題擋掉了。注意這只是在這一份資料、這個代理的正解上量到的，不要說成「`n = 1` 永遠比較好」；選哪一組沒有標準答案，要能說明依據。提示：`alpha` 愈小，「這個語言看過、另一個語言沒看過」的片段，證據愈強。常見錯誤：只看測試句的結果就選 `n = 3`。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import NGramClassifier, load_langid_samples, read_pages
+
+SCRIPTS = {"han": (0x4E00, 0x9FFF), "kana": (0x3040, 0x30FF), "hangul": (0xAC00, 0xD7AF), "cyrillic": (0x0400, 0x04FF)}
+
+
+def expected_language(text):
+    letters = [ord(ch) for ch in text if ch.isalpha()]
+    s = {name: sum(lo <= c <= hi for c in letters) / max(len(letters), 1) for name, (lo, hi) in SCRIPTS.items()}
+    if s["hangul"] >= 0.5:
+        return "ko"
+    if s["han"] + s["kana"] >= 0.5:
+        return "ja" if s["kana"] >= 0.05 else "zh"
+    if s["cyrillic"] >= 0.5:
+        return "ru"
+
+
+train, test = load_langid_samples("train"), load_langid_samples("test")
+pages = [(p.text, expected_language(p.text)) for p in read_pages("data/cc/pages.jsonl")]
+pages = [(text, want) for text, want in pages if want]
+
+print(" n  alpha  測試句  整頁  逐行")
+for n in [1, 2, 3, 4]:
+    for alpha in [0.01, 0.1, 1.0]:
+        model = NGramClassifier.train(train, n, alpha)
+        sentences = sum(model.predict(t)[0] == lang for lang, ts in test.items() for t in ts)
+        whole = sum(model.predict(text)[0] == want for text, want in pages)
+        lines = sum(model.predict_lines(text) == want for text, want in pages)
+        print(f"{n:2d}  {alpha:5}  {sentences:3d}/60  {whole:3d}  {lines:3d}  (共 {len(pages)} 頁)")
+```
+
+M4 Max 上的輸出（每次相同）：
+
+```text
+ n  alpha  測試句  整頁  逐行
+ 1   0.01   59/60  280  311  (共 318 頁)
+ 1    0.1   59/60  272  310  (共 318 頁)
+ 1    1.0   56/60  245  311  (共 318 頁)
+ 2   0.01   59/60  257  309  (共 318 頁)
+ 2    0.1   59/60  250  310  (共 318 頁)
+ 2    1.0   59/60  223  306  (共 318 頁)
+ 3   0.01   60/60  248  309  (共 318 頁)
+ 3    0.1   60/60  245  309  (共 318 頁)
+ 3    1.0   60/60  213  304  (共 318 頁)
+ 4   0.01   60/60  246  308  (共 318 頁)
+ 4    0.1   60/60  240  309  (共 318 頁)
+ 4    1.0   60/60  207  303  (共 318 頁)
+```
+
+### 第 4 集 PII 遮蔽 — 狀態：可用
+
+**題目**
+
+Dolma 的規則是：一頁遮蔽了 6 個以上的 PII，整頁丟掉。在 817 頁網頁上，用 `mask_pii` 的次數，量門檻訂在「1、3、6、10 個以上」時，各丟幾頁、少了百分之幾的字元、帶走百分之幾的 PII。為什麼丟掉的頁數很少，字元卻少得比頁數的比例多很多？
+
+**練習目標**：把「遮蔽」與「整頁丟掉」兩種處理接在一起，並量一個門檻的代價。
+
+**批改重點**：1、3、6、10 個以上分別丟 190、51、14、4 頁（23.3%、6.2%、1.7%、0.5%），少 35.4%、17.2%、11.4%、8.4% 的字元，帶走 100%、68%、45%、34% 的 PII。丟掉的頁面比較長：門檻 6 個時，丟掉 1.7% 的頁面卻少了 11.4% 的字元，這 14 頁平均是全部頁面平均長度的約 6.7 倍（多半是長長的目錄或名單），所以字元的損失比例大於頁數的比例。提示：`mask_pii(text)` 回傳的字典，`sum(counts.values())` 是這一頁遮蔽了幾個。常見錯誤：用遮蔽後的文字長度算字元，結果和原文不一樣（標記比原文短）。
+
+**參考答案**
+
+```python,norun
+from llmz.pipeline import mask_pii, read_pages
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+results = [mask_pii(p.text) for p in pages]
+n_pii = [sum(counts.values()) for _, counts in results]
+
+for limit in [1, 3, 6, 10]:
+    dropped = [i for i, n in enumerate(n_pii) if n >= limit]
+    chars_lost = sum(len(pages[i].text) for i in dropped)
+    pii_gone = sum(n_pii[i] for i in dropped)
+    print(
+        f"{limit:2d} 個以上整頁丟：丟 {len(dropped):3d} 頁（{len(dropped) / len(pages):.1%}），"
+        f"少 {chars_lost / sum(len(p.text) for p in pages):.1%} 的字元，帶走 {pii_gone / sum(n_pii):.0%} 的 PII"
+    )
+```
+
+### 第 5 集 有害內容分類 — 狀態：可用
+
+**題目**
+
+第 5 集的分類器是整句分類。Dolma 是逐句：把文件切成句子，只丟掉分數高於門檻的句子。寫 `drop_flagged(text, threshold)`，回傳 `(留下的文字, 丟掉幾句)`。用第 5 集的玩具分類器（可以縮小訓練資料，各 6 句）與一份 4 句的文件測試：三句正常、一句罵人（用 `blorf`）夾在中間。逐句丟與整頁丟，各剩幾個字元？
+
+**練習目標**：把句子層級的處理接在分類器後面，並比較兩種粒度保留多少資料。
+
+**批改重點**：文件的 4 句分數是 `-0.6`、`-1.0`、`1.32`、`-1.24`，門檻 `0.1` 丟掉第三句，留下 95 個字元；整頁丟則 0 個（文件原本 135 個）。用 `re.split(r"(?<=[.!?])\s+", text)` 切句；用 `" ".join` 接回去。提示：分數是 `score(text) = (ll["flagged"] - ll["ok"]) / 片段數`，不用 `predict` 的機率。常見錯誤：句子切在縮寫的句點（`Mr.`）而切錯，這個簡單的切法的限制，要先說出來。
+
+**參考答案**
+
+```python
+import re
+
+from llmz.pipeline import NGramClassifier, char_ngrams
+
+FLAGGED = [
+    "you are such a zorp, nobody wants you on this team",
+    "what a blorf, you lost us the game again",
+    "shut up you big snurgle and go away",
+    "stupid zorp, you ruin every match",
+    "go away you filthy snurgle, you are the worst",
+    "what a pathetic blorf you are",
+]
+OK = [
+    "good game everyone, that was a close match",
+    "nice shot, you saved us in the last round",
+    "can someone help me with the second level",
+    "thanks for the invite, this team is fun",
+    "the new map looks great, i love the colors",
+    "well played, see you all tomorrow",
+]
+model = NGramClassifier.train({"flagged": FLAGGED, "ok": OK})
+
+
+def score(text):
+    ll = model.log_likelihoods(text)
+    return (ll["flagged"] - ll["ok"]) / sum(char_ngrams(text, model.n).values())
+
+
+def drop_flagged(text, threshold=0.1):
+    """逐句分類：丟掉分數高於門檻的句子，回傳 (留下的文字, 丟掉幾句)。"""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if score(s) <= threshold]
+    return " ".join(kept), len(sentences) - len(kept)
+
+
+doc = (
+    "Good game everyone. Thanks for the invite, this team is fun. "
+    "What a pathetic blorf you are, go away. Well played, see you all tomorrow."
+)
+kept, dropped = drop_flagged(doc)
+print(f"丟掉 {dropped} 句，留下：{kept}")
+print(f"逐句丟：剩 {len(kept)} 個字元；整頁丟：剩 0 個字元（原本 {len(doc)} 個）")
+```
+
+### 第 6 集 Gopher 品質規則 — 狀態：可用
+
+**題目**
+
+Gopher 的七條規則只看文件的「形狀」。寫一個函式 `make_spam(n_words, seed)`：用一個自己編的詞表（約 30 個英文詞，其中至少要有兩個 Gopher 的停用詞），隨機抽詞組成一份 `n_words` 個詞的文件，每 10 個詞一行，讓 `gopher_check` 判定通過。接著把同一行約 16 個詞的文字重複 20 次，組成另一份文件，它也通過嗎？用規則的內容解釋這兩份文件為什麼能通過。
+
+**練習目標**：理解品質規則是「形狀」的篩子：它擋得掉選單、標籤堆疊、數字表，但判斷不了內容通不通順，也看不出重複。
+
+**批改重點**：兩份文件都通過（`(True, [])`）。隨機抽詞也會抽到 `the`、`and`，所以停用詞的條件過得了；詞數、平均詞長、符號比例、字母比例、行首行尾的條件，都只數「有多少」，不看詞排得通不通順。重複的行讓每一個比例都和原來的那一行一樣，沒有一條規則看得出「重複」。Gopher 的論文把重複另外放在「重複移除」這個階段，本章第 8、9 集的 exact dedup 與 MinHash 就是處理這件事。常見錯誤：詞表裡沒放停用詞，結果卡在 `stop_words`。
+
+**參考答案**
+
+```python
+import random
+
+from llmz.pipeline import gopher_check
+
+WORDS = (
+    "the of and garden river cheap window yellow market quickly paper silver engine planet "
+    "orange bridge hollow ladder pencil forest candle wander mirror basket thunder velvet harbor copper meadow lantern whisper"
+).split()
+
+
+def make_spam(n_words, seed):
+    rng = random.Random(seed)
+    words = [rng.choice(WORDS) for _ in range(n_words)]
+    return "\n".join(" ".join(words[i : i + 10]) for i in range(0, n_words, 10))  # 每 10 個詞一行
+
+
+print(gopher_check(make_spam(100, 0)))
+
+line = "buy cheap silver watches and the best bridge deals with free delivery to your door today"
+repeated = "\n".join([line] * 20)
+print(len(repeated.split()), gopher_check(repeated))
+```
+
+### 第 7 集 品質分類器 — 狀態：可用
+
+**題目**
+
+GPT-3 的論文用 `np.random.pareto(α) > 1 − document_score` 決定一份文件留不留，α = 9。假設 `document_score` 就是分類器給的機率 \\( s \\)。用 `np.random.default_rng(0).pareto(9, size=1_000_000)` 模擬，量出 \\( s = 0.99、0.9、0.5、0.1、0 \\) 的文件各自被留下的比例。numpy 的 `pareto` 是 Lomax 分布，\\( P(X > x) = (1 + x)^{-9} \\)，用它算出每個 \\( s \\) 的精確機率，和模擬比對。分數 0.9 的文件被留下的機率是多少？這和「分數大於 0.5 才留」的門檻有什麼不同？
+
+**練習目標**：把分類器的分數變成留下的機率，看到 soft sampling 與硬門檻的差別，以及 α 怎麼調整「多嚴格」。
+
+**批改重點**：模擬與精確值吻合，約 0.914、0.424、0.026、0.0031、0.0020（精確值是 \\( (2 - s)^{-9} \\)）。分數 0.9 的文件只有約 42% 被留下，分數 0 的文件也有 0.2% 的機會；硬門檻則是 0.5 以上全留、以下全丟。這樣的抽樣讓資料大部分來自高分文件，同時還收進一些不像正例的文件，不會整個縮到正例的樣子（論文說 α 取 9 是為了這個目的）。提示：留下的條件是 `x > 1 - s`，所以要算的是 \\( P(X > 1 - s) \\)。
+
+**參考答案**
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+x = rng.pareto(9, size=1_000_000)  # numpy 的 pareto 是 Lomax（Pareto II）分布：P(X > x) = (1 + x) ** -9
+for s in [0.99, 0.9, 0.5, 0.1, 0.0]:
+    simulated = (x > 1 - s).mean()
+    exact = (1 + (1 - s)) ** -9  # P(X > 1 - s)
+    print(f"分數 {s:.2f}：模擬留下 {simulated:.4f}，精確值 {exact:.4f}")
+```
+
+### 第 8 集 exact dedup — 狀態：可用
+
+**題目**
+
+`dedup_lines` 把出現在至少 `min_pages` 頁的行，每一份都拿掉。改成「每一行只保留在它第一次出現的那一頁，後面的頁面都拿掉」（同一頁自己重複的行不動），寫出 `dedup_lines_keep_first(pages)`。先執行 `uv run python tools/prepare_webtext.py` 取得 `data/cc/pages.jsonl`，比較它與 `dedup_lines(pages, 2)` 拿掉的行數、字元數與整頁丟掉的頁數，並看那 6 份一模一樣的頁面各留下幾份。
+
+**練習目標**：「出現在很多頁就整個拿掉」與「重複的只留一份」是兩種不同的去重：前者適合每頁共用的框架，後者保留內容。
+
+**批改重點**：`dedup_lines(pages, 2)` 拿掉 23,040 行（21.3%）、216,680 個字元（4.9%），整頁丟掉 10 頁，6 份一模一樣的頁面一份都不剩；`dedup_lines_keep_first` 拿掉 16,189 行（15.0%）、133,798 個字元（3.0%），整頁丟掉 8 頁，6 份一模一樣的頁面留下 1 份（第一份）。提示：邊掃邊記 `seen`（出現過的行的集合）。常見錯誤：每讀一行就更新 `seen`，結果同一頁自己重複的行被當成「前面出現過」而拿掉；要處理完這一頁才把這一頁的行加進 `seen`。
+
+**參考答案**
+
+```python,norun
+from collections import Counter
+
+from llmz.pipeline import Page, dedup_lines, read_pages
+
+
+def dedup_lines_keep_first(pages):
+    """每一行只留在它第一次出現的那一頁；同一頁自己重複的行不動。"""
+    seen, kept = set(), []
+    for page in pages:
+        lines = page.text.split("\n")
+        fresh = [line for line in lines if line and line not in seen]  # 前面的頁面都沒出現過的行
+        seen.update(lines)  # 這一頁處理完才更新
+        if fresh:
+            kept.append(Page(page.url, "\n".join(fresh)))
+    return kept
+
+
+pages = list(read_pages("data/cc/pages.jsonl"))
+n_lines = sum(len(p.text.split("\n")) for p in pages)
+n_chars = sum(len(p.text) for p in pages)
+for name, kept in [("dedup_lines(min_pages=2)", dedup_lines(pages, 2)), ("dedup_lines_keep_first", dedup_lines_keep_first(pages))]:
+    kept_lines = sum(len(p.text.split("\n")) for p in kept)
+    kept_chars = sum(len(p.text) for p in kept)
+    print(
+        f"{name}：拿掉 {n_lines - kept_lines:,} 行（{1 - kept_lines / n_lines:.1%}）、{n_chars - kept_chars:,} 個字元"
+        f"（{1 - kept_chars / n_chars:.1%}），整頁丟掉 {len(pages) - len(kept)} 頁"
+    )
+
+same_text = Counter(p.text for p in pages)
+copies = {p.url for p in pages if same_text[p.text] == 6}  # 那 6 份一模一樣的頁面
+for name, kept in [("min_pages=2", dedup_lines(pages, 2)), ("keep_first", dedup_lines_keep_first(pages))]:
+    print(f"{name}：6 份一模一樣的頁面留下 {sum(p.url in copies for p in kept)} 份")
+```
+
+### 第 9 集 MinHash + LSH — 狀態：可用
+
+**題目**
+
+簽章有 128 格時，\\( b \times r = 128 \\) 的組合只有 8 種。用 `lsh_probability` 印出每一種組合在 \\( J = 0.8 \\) 與 \\( J = 0.5 \\) 的候選機率：有沒有一種同時讓 \\( J = 0.8 \\) 的機率 >= 0.99、\\( J = 0.5 \\) 的機率 <= 0.1？如果簽章可以更長（\\( b \times r \le 512 \\)，\\( b, r \\) 不必是 128 的因數），符合條件的最短簽章是幾格？代價是什麼？
+
+**練習目標**：S 曲線的位置由 \\( b, r \\) 的比例決定，陡不陡由 \\( b \times r \\) 的大小決定；要又陡又在對的位置，只能加長簽章。
+
+**批改重點**：128 格裡沒有任何一組符合：\\( b=16, r=8 \\) 是 0.947 與 0.061，\\( J = 0.8 \\) 差一點；\\( b=32, r=4 \\) 是 1.000 與 0.873，\\( J = 0.5 \\) 太高。\\( b \times r \le 512 \\) 裡最短的是 \\( b=26, r=8 \\)，208 格（0.992 與 0.097）。代價：簽章是 128 格的 1.6 倍長（記憶體 1.6 倍：每份文件 1.6 KiB），`minhash_signature` 的時間也大約是 1.6 倍。提示：兩層迴圈枚舉 \\( b, r \\)，條件寫成函式。
+
+**參考答案**
+
+```python
+from llmz.pipeline import lsh_probability
+
+
+def ok(bands, rows):
+    return lsh_probability(0.8, bands, rows) >= 0.99 and lsh_probability(0.5, bands, rows) <= 0.1
+
+
+for bands in [1, 2, 4, 8, 16, 32, 64, 128]:
+    rows = 128 // bands
+    p80, p50 = lsh_probability(0.8, bands, rows), lsh_probability(0.5, bands, rows)
+    print(f"128 格：b={bands:3d} r={rows:3d}：P(0.8)={p80:.3f}  P(0.5)={p50:.3f}  {'符合' if ok(bands, rows) else ''}")
+
+size, bands, rows = min((b * r, b, r) for b in range(1, 513) for r in range(1, 513) if b * r <= 512 and ok(b, r))
+print(f"最短的簽章：b={bands}, r={rows}，{size} 格；P(0.8)={lsh_probability(0.8, bands, rows):.3f}，P(0.5)={lsh_probability(0.5, bands, rows):.3f}")
+```
+
+### 第 10 集 組成資料管線 — 狀態：可用
+
+**題目**
+
+第 10 集說：會改文字的步驟（`dedup_lines`）要放在判斷文字的步驟（`keep_gopher`）前面。造一組 5 頁的網頁，每頁有同樣一行選單加上自己的內容，讓 `dedup_lines` 與 `keep_gopher` 兩種順序留下的頁數不同。用 `run_pipeline`（`size` 傳「詞數」）印出每一步之後的頁數與詞數，並且把最後的頁面再用 `gopher_check` 檢查一次。語言辨識與 `keep_gopher` 換順序，也會不同嗎？為什麼？
+
+**練習目標**：用 `run_pipeline` 看見「改文字的步驟」與「判斷的步驟」不能交換，而只做判斷的步驟可以。
+
+**批改重點**：每頁的內容是 44 個詞、共用的選單 12 個詞，總共 56 個詞，剛好過 Gopher 的 50 個詞的下限；拿掉選單之後只剩 44 個詞。先 `dedup_lines`：5 頁（285 個詞）→ 5 頁（220 個詞）→ 0 頁。先 Gopher：5 → 5（285）→ 5（220），最後的 5 頁用 `gopher_check` 再檢查，全部沒通過（詞數不到 50）。語言辨識與 `keep_gopher` 都只判斷、不改文字，頁面通不通過只看那一頁自己，所以換順序，留下的是同一批頁面。常見錯誤：選單只出現在 4 頁以下（`min_pages=5` 的門檻沒到，選單不會被拿掉）；兩種順序的內容與詞數，要用同一組頁面比，不要各造一組。
+
+**參考答案**
+
+```python
+from llmz.pipeline import Page, dedup_lines, gopher_check, keep_gopher, run_pipeline
+
+shared = "the shop is open and we have the best prices for you today"  # 每一頁都有的選單，12 個詞
+pages = []
+for i in range(5):
+    body = " ".join([f"item{i}-{j}" for j in range(42)] + ["the", "and"])  # 每一頁自己的內容，44 個詞
+    pages.append(Page(f"http://shop.example/{i}", f"{shared}\n{body}"))
+
+orders = {
+    "dedup_lines → Gopher": [("dedup_lines", dedup_lines), ("Gopher", keep_gopher)],
+    "Gopher → dedup_lines": [("Gopher", keep_gopher), ("dedup_lines", dedup_lines)],
+}
+for name, steps in orders.items():
+    kept, report = run_pipeline(pages, steps, size=lambda text: len(text.split()))
+    print(f"{name}：" + " → ".join(f"{r.docs} 頁（{r.size} 個詞）" for r in report))
+    print("  最後的頁面通過 Gopher：", [gopher_check(p.text)[0] for p in kept])
+```
+
+### 第 11 集 資料混合與合成資料 — 狀態：可用
+
+**題目**
+
+第 11 集談了混合權重，但沒有寫取樣器。寫 `mixed_batch(sources, weights, batch_size, context_length, rng)`：先用 `rng.multinomial` 決定 batch 裡每個來源各幾筆，再對各來源呼叫第 5 章的 `get_batch`，把結果接起來。造兩個假的 token 檔：大的來源 40 萬個 token（內容全是 1），小的來源 1 萬個 token（內容全是 2），這樣看第一個 token 就知道那一筆來自哪裡。小來源的權重分別是 10% 與 5%，訓練 1,000 步（batch 32、context 16），數出來自小來源的樣本有幾筆，以及小來源被看了幾遍。如果小來源最多只看 4 遍，權重最高可以是多少？
+
+**練習目標**：把「權重」變成取樣器，並算出權重、資料量與重複次數的關係：權重越高，小來源重複越多遍。
+
+**批改重點**：權重 10% 時有 3,287 / 32,000 筆來自小來源（10.27%），小來源被看了 5.26 遍；權重 5% 時有 1,539 筆（4.81%），看了 2.46 遍。看的遍數是「來自小來源的筆數 × context 長度 ÷ 小來源的 token 數」。最多看 4 遍的話，權重最高約 7.81%（\\( 4 \times 10000 \div (1000 \times 32 \times 16) \\)）。實際比例與權重不完全一樣：每一筆是獨立抽的，多出來的 0.27% 與少掉的 0.19% 是抽樣的隨機誤差（1,000 步、32,000 筆）。常見錯誤：用 `torch.multinomial` 逐筆抽，慢又難重現（`rng.multinomial` 一次決定各來源幾筆，種子固定，結果就固定）；算遍數時忘了乘 context 長度。
+
+**參考答案**
+
+```python
+import numpy as np
+import torch
+
+from llmz.data import get_batch
+
+big = np.ones(400_000, dtype=np.uint16)  # 大的來源：內容全是 1，方便看每一筆來自哪裡
+small = np.full(10_000, 2, dtype=np.uint16)  # 小的來源：內容全是 2
+
+
+def mixed_batch(sources, weights, batch_size, context_length, rng):
+    """先決定 batch 裡每個來源各幾筆，再對各來源呼叫 get_batch，接起來。"""
+    counts = rng.multinomial(batch_size, weights)
+    parts = [get_batch(data, n, context_length, torch.device("cpu")) for data, n in zip(sources, counts) if n]
+    return torch.cat([x for x, _ in parts]), torch.cat([y for _, y in parts])
+
+
+rng = np.random.default_rng(0)
+steps, batch_size, context_length = 1000, 32, 16
+for weight in [0.1, 0.05]:
+    from_small = 0
+    for _ in range(steps):
+        x, y = mixed_batch([big, small], [1 - weight, weight], batch_size, context_length, rng)
+        from_small += int((x[:, 0] == 2).sum())
+    samples = steps * batch_size
+    tokens_seen = from_small * context_length
+    print(f"權重 {weight:.0%}：{from_small:,} / {samples:,} 筆來自小來源（{from_small / samples:.2%}），"
+          f"小來源被看了 {tokens_seen / len(small):.2f} 遍")
+
+total_tokens = steps * batch_size * context_length
+print(f"小來源最多看 4 遍：權重最高 {4 * len(small) / total_tokens:.2%}")
+```
+
+## 第 14 章 後訓練：SFT 與偏好學習
+
+### 第 1 集 base model 與指令模型 — 狀態：可用
+
+**題目**
+
+用 `make_tasks(1000, seed=1, split="valid")`。先寫一個「永遠回答 `three`」的模型，用 `reward` 對五種題型各算正確率。再讓每種題型都回答「它自己的標準答案裡最常見的那一個」（用 `collections.Counter`），算每種題型的正確率與合計。第 3 集的 SFT 模型在同一批題目上是 755/1000，這個固定答案的基準線是多少？`color` 與 `who` 的基準線，和「在題目裡出現的候選之間亂猜」比起來，哪個高？
+
+**練習目標**：評分要和基準線比。一個什麼都不看的固定答案，在有些題型上也會答對。
+
+**批改重點**：永遠回答 `three` 時，加 8.5%、減 13.5%、數數量 26.0%，`color` 與 `who` 是 0%（答案不是數字）。每種題型回答它最常見的答案：`five` 22.3%、`one` 28.5%、`three` 26.0%、`purple` 12.1%、`Tom` 14.0%，合計 20.4%。SFT 的 75.5% 比它高 55 個百分點，主要是加、減、數數量從 20% 上下變成 100%。`color` 的固定答案只有 12.1%，比在兩個候選顏色之間亂猜的 50% 低很多；`who` 的 14.0% 也比三選一的 33% 低。差別在「知道答案一定在題目裡」，這是 SFT 學到的答案範圍（第 3 集）。
+
+**參考答案**
+
+```python
+from collections import Counter
+
+from llmz.posttrain import KINDS, make_tasks, reward
+
+valid = make_tasks(1000, seed=1, split="valid")
+print("永遠回答 three：")
+for kind in KINDS:
+    mine = [t for t in valid if t.kind == kind]
+    print(f"  {kind:9s}{sum(reward(t, 'three') for t in mine) / len(mine):.1%}")
+
+total = 0
+for kind in KINDS:
+    mine = [t for t in valid if t.kind == kind]
+    best, count = Counter(t.answer for t in mine).most_common(1)[0]
+    total += sum(reward(t, best) for t in mine)
+    print(f"{kind:9s}最常見的答案 {best}：{count / len(mine):.1%}")
+print(f"每種題型都回答它最常見的答案，合計 {total / len(valid):.1%}")
+```
+
+### 第 2 集 chat template 與 loss mask — 狀態：可用
+
+**題目**
+
+用第 3 章的 byte-level tokenizer（`Tokenizer(base_vocab([END]), [], [END])`），對 `make_tasks(1000, seed=0)` 的每一題用 `encode_chat` 編碼。算每題平均幾個 token、其中幾個算 loss、比例多少。再算：如果把 `Assistant:` 這個角色標記也算進 loss，比例變成多少？為什麼我們不這樣做？
+
+**練習目標**：回覆只佔整串很小的一部分，mask 決定這一小部分以外的 token 不算 loss；角色標記是固定的、不需要學。
+
+**批改重點**：每題平均 94.2 個 token（一個 byte 一個 token），算 loss 的 6.0 個（空格、答案的字母、`<|endoftext|>`），6.4%。`Assistant:` 是 10 個 byte，加進去變成 17.0%。不這樣做：`Assistant:` 在推論時是我們填的提示（`generation_prompt=True`），模型不用寫；它每一題都一樣，loss 很快變成 0，只是稀釋平均。
+
+**參考答案**
+
+```python
+from llmz.posttrain import encode_chat, make_tasks, task_messages
+from llmz.tokenizer import Tokenizer, base_vocab
+
+END = "<|endoftext|>"
+tokenizer = Tokenizer(base_vocab([END]), [], [END])
+header = len(tokenizer.encode("Assistant:"))
+total = trained = 0
+tasks = make_tasks(1000, seed=0)
+for task in tasks:
+    ids, mask = encode_chat(tokenizer, task_messages(task, with_answer=True))
+    total += len(ids)
+    trained += sum(mask)
+print(f"每題平均 {total / len(tasks):.1f} 個 token，算 loss 的 {trained / len(tasks):.1f} 個（{trained / total:.1%}）")
+print(f"連 Assistant:（{header} 個 token）也算：{(trained + header * len(tasks)) / total:.1%}")
+```
+
+### 第 3 集 SFT 玩具版 — 狀態：可用
+
+**題目**
+
+用第 3 集的 smoke 設定（隨機初始化的小模型、byte-level tokenizer、60 步），只把 `n_train` 分別換成 16 與 1000，各訓練一次，印出最後的訓練 loss 與 `val_loss`。哪一個的訓練 loss 比較低？哪一個的 `val_loss` 比較低？為什麼？
+
+**練習目標**：SFT 的資料夠不夠多會影響泛化；題目太少，模型把它們背下來。
+
+**批改重點**：`n_train=16` 的訓練 loss 很低（約 0.03），`val_loss` 卻很高（約 2.8）：60 步 × 16 = 960 條樣本，平均每一題被看了 60 次，模型背下這 16 題的答案，沒學到規則；`n_train=1000` 的訓練 loss 較高（約 0.9），`val_loss` 低得多（約 1.2）。具體數字隨機器與 PyTorch 版本略有不同，但這個大小關係穩定。
+
+**參考答案**
+
+```python
+from llmz.model import ModelConfig
+from llmz.posttrain import SFTConfig, train_sft
+from llmz.tokenizer import Tokenizer, base_vocab
+
+END = "<|endoftext|>"
+tokenizer = Tokenizer(base_vocab([END]), [], [END])
+for n_train in [16, 1000]:
+    cfg = SFTConfig(
+        base_path="", out_dir=f"smoke_{n_train}",
+        model=ModelConfig(vocab_size=257, context_length=256, d_model=64, n_layers=2, n_heads=4, d_ff=128),
+        n_train=n_train, n_valid=20, batch_size=16, max_steps=60, lr_max=3e-3, lr_min=3e-4, warmup_steps=5,
+        log_every=60, eval_every=60, device="cpu",
+    )
+    last = train_sft(cfg, tokenizer)[-1]
+    print(f"n_train={n_train:4d}：訓練 loss {last['loss']:.2f}，val_loss {last['val_loss']:.2f}")
+```
+
+### 第 4 集 reward model 的想法 — 狀態：可用
+
+**題目**
+
+寫一個「只看回覆、不看題目」的獎勵模型：每個顏色一個分數（`nn.Parameter`，10 個數字，從 0 開始），用 `make_preferences(2000, seed=0, split="train", kinds=("color",))` 與 `bradley_terry_loss` 訓練 300 步（`AdamW`，`lr=0.05`）。算分數較高的是 `chosen` 的比例，訓練的 2000 對與 `make_preferences(1000, seed=1, split="valid", kinds=("color",))` 的 1000 對各算一次。這個比例會比 50% 高多少？為什麼？
+
+**練習目標**：獎勵模型要看到提示。只看回覆的分數，在 `chosen` 與 `rejected` 的分布一樣的資料上，不可能比亂猜好。
+
+**批改重點**：訓練集 53.6%，驗證集 50.7%，最後的 loss 是 0.6891，幾乎就是 \\( \log 2 = 0.6931 \\)。分數範圍只有 \\( -0.25 \\) 到 \\( 0.24 \\)。`color` 題的 `chosen` 是題目裡被問的那樣東西的顏色，`rejected` 是另一個，兩邊的顏色分布一樣（每個顏色當 `chosen` 與當 `rejected` 的機會均等），所以某個顏色「比較好」沒有道理；訓練集上的 3.6 個百分點是 300 步 `AdamW` 對 2000 對資料的雜訊擬合，驗證集上就沒了。要分辨哪個顏色對，得知道題目問的是哪一樣東西。
+
+**參考答案**
+
+```python
+import torch
+from torch import nn
+
+from llmz.optim import AdamW
+from llmz.posttrain import COLORS, bradley_terry_loss, make_preferences
+
+train = make_preferences(2000, seed=0, split="train", kinds=("color",))
+valid = make_preferences(1000, seed=1, split="valid", kinds=("color",))
+index = {c: i for i, c in enumerate(COLORS)}
+
+
+def ids(pairs):
+    return torch.tensor([index[p.chosen] for p in pairs]), torch.tensor([index[p.rejected] for p in pairs])
+
+
+scores = nn.Parameter(torch.zeros(len(COLORS)))  # 獎勵模型：每個顏色一個分數，不看題目
+optimizer = AdamW([scores], lr=0.05, weight_decay=0.0)
+train_chosen, train_rejected = ids(train)
+for step in range(300):
+    loss = bradley_terry_loss(scores[train_chosen], scores[train_rejected])
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+for name, pairs in [("train", train), ("valid", valid)]:
+    chosen, rejected = ids(pairs)
+    rate = (scores[chosen] > scores[rejected]).float().mean().item()
+    print(f"{name}：{len(pairs)} 對，分數較高的是 chosen 的比例 {rate:.1%}")
+print("loss", round(loss.item(), 4), "（log 2 = 0.6931）")
+print("分數範圍", round(scores.min().item(), 2), "到", round(scores.max().item(), 2))
+```
+
+### 第 5 集 DPO 推導與玩具版實作 — 狀態：可用
+
+**題目**
+
+policy 比 reference 多給 `chosen` 的 log 機率 2、少給 `rejected` 2（reference 兩個都是 \\( -3 \\)，policy 是 \\( -1 \\) 與 \\( -5 \\)）。對 \\( \beta \in \\{0.01, 0.1, 1, 5\\} \\)，用 `dpo_loss` 各算 loss，並用 `backward()` 算對 `policy_chosen` 的梯度。loss 隨 \\( \beta \\) 怎麼變？梯度呢？為什麼？
+
+**練習目標**：\\( \beta \\) 同時放大隱含獎勵與壓縮 sigmoid 的有效範圍；loss 與梯度的大小不是單調的。
+
+**批改重點**：loss 是 0.6733、0.5130、0.0181、0.0000：\\( \beta \\) 越大越小，因為隱含獎勵的差是 \\( \beta \times 4 \\)，sigmoid 越快飽和。梯度是 \\( -0.0049 \\)、\\( -0.0401 \\)、\\( -0.0180 \\)、\\( -0.0000 \\)：先變大再變小。\\( \beta \\) 小時，loss 幾乎是 \\( \log 2 \\)，梯度大約是 \\( -\beta \sigma(-4\beta) \approx -\beta/2 \\)，隨 \\( \beta \\) 增加；\\( \beta \\) 大時 sigmoid 已經飽和，這一對「已經做對了」，梯度趨近 0，policy 不再被往外推，停在離 reference 不遠的地方。這就是 \\( \beta \\) 控制「policy 可以離 reference 多遠」的方式。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.posttrain import dpo_loss
+
+ref_chosen, ref_rejected = torch.tensor([-3.0]), torch.tensor([-3.0])
+for beta in [0.01, 0.1, 1.0, 5.0]:
+    policy_chosen = torch.tensor([-1.0], requires_grad=True)  # chosen 比 reference 高 2
+    policy_rejected = torch.tensor([-5.0], requires_grad=True)  # rejected 比 reference 低 2
+    loss = dpo_loss(policy_chosen, policy_rejected, ref_chosen, ref_rejected, beta)
+    loss.backward()
+    print(f"beta {beta:5.2f}：loss {loss.item():.4f}　對 chosen 的梯度 {policy_chosen.grad.item():+.4f}")
+```
+
+## 第 15 章 後訓練：RL 與可驗證獎勵
+
+### 第 1 集 policy gradient 直覺 — 狀態：可用
+
+**題目**
+
+吃角子老虎機的平均獎勵是 `[0, 3, 2, 5, 4]`，policy 的 logits 是 `[1.0, 0.0, 0.0, -1.0, 0.5]`。不要抽樣：對 5 個動作各算 \\( \pi(a)\\, R(a)\\, (\text{one\_hot}(a) - \pi) \\)，加起來，和對 `expected_reward` 做 `backward()` 得到的梯度比較。
+
+**練習目標**：\\( \nabla J = \mathbb{E}[R \\, \nabla \log \pi(a)] \\) 的期望值，真的就是把每個動作「機率乘上它的推力」加起來；抽樣只是用平均去逼近這個加總。
+
+**批改重點**：兩個向量相同，約 `[-0.805, 0.149, 0.001, 0.164, 0.491]`。要能說出：softmax 的 \\( \nabla \log \pi(a) \\) 是 `one_hot(a) - π`；抽樣估計的平均會趨近這個加總。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.functional import softmax
+from llmz.rl import expected_reward
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.tensor([1.0, 0.0, 0.0, -1.0, 0.5], requires_grad=True)
+
+# 對照：直接對 expected_reward 做 backward
+expected_reward(logits, means).backward()
+
+# 不抽樣：把每個動作的 pi(a) * R(a) * (one_hot(a) - pi) 加起來
+with torch.no_grad():
+    probs = softmax(logits)
+    by_hand = sum(probs[a] * means[a] * ((torch.arange(5) == a).float() - probs) for a in range(5))
+
+print("手算的期望   ", [round(x, 3) for x in by_hand.tolist()])
+print("autograd 梯度", [round(x, 3) for x in logits.grad.tolist()])
+print("相同：", torch.allclose(by_hand, logits.grad, atol=1e-6))
+```
+
+### 第 2 集 REINFORCE 玩具版 — 狀態：可用
+
+**題目**
+
+`estimate_gradient` 的批次平均 baseline 把被抽到的樣本也算進平均，所以估計的平均會小 \\( (n-1)/n \\) 倍。改用 leave-one-out baseline：每個樣本的 baseline 是「其他 \\( n-1 \\) 個樣本獎勵的平均」。用 `sample_actions`、`bandit_rewards`、`reinforce_loss` 寫出 `loo_gradient`，取 \\( n=2 \\)、`noise_std=1.0`、policy 全 0，各重複 4000 次，比較「沒有 baseline」「批次平均」「leave-one-out」三種估計的平均（是精確梯度的幾倍）與變異加總。
+
+**練習目標**：baseline 只要和被抽到的動作無關就不影響期望值；批次平均違反了這一點，只是影響很小（\\( n \\) 大時）。
+
+**批改重點**：沒有 baseline 與 leave-one-out 的平均約是精確梯度的 1.0 倍，批次平均約 0.5 倍（\\( n=2 \\) 時 \\( (n-1)/n = 1/2 \\)）；變異加總約 4.5、0.8、3.2：leave-one-out 無偏，變異比沒有 baseline 小，但比批次平均大。數字隨隨機數種子略有變動（4000 次重複）。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import bandit_rewards, estimate_gradient, expected_reward, reinforce_loss, sample_actions
+
+
+def loo_gradient(logits, means, n, noise_std, generator):
+    """leave-one-out baseline：每個樣本的 baseline 是「其他 n-1 個樣本獎勵的平均」。"""
+    logits = logits.detach().requires_grad_()
+    actions = sample_actions(logits, n, generator)
+    rewards = bandit_rewards(means, actions, noise_std, generator)
+    baselines = (rewards.sum() - rewards) / (n - 1)
+    reinforce_loss(logits.expand(n, -1), actions, rewards - baselines).backward()
+    return -logits.grad
+
+
+means = torch.tensor([0.0, 3.0, 2.0, 5.0, 4.0])
+logits = torch.zeros(5)
+exact = torch.zeros(5, requires_grad=True)
+expected_reward(exact, means).backward()
+exact = exact.grad
+
+n, repeats = 2, 4000
+generator = torch.Generator().manual_seed(0)
+runs = {
+    "沒有 baseline": torch.stack([estimate_gradient(logits, means, n, False, 1.0, generator) for _ in range(repeats)]),
+    "批次平均": torch.stack([estimate_gradient(logits, means, n, True, 1.0, generator) for _ in range(repeats)]),
+    "leave-one-out": torch.stack([loo_gradient(logits, means, n, 1.0, generator) for _ in range(repeats)]),
+}
+for name, g in runs.items():
+    scale = (g.mean(dim=0) @ exact / (exact @ exact)).item()  # 平均的方向上，是精確梯度的幾倍
+    print(f"{name:14s} 平均是精確梯度的 {scale:.2f} 倍，變異加總 {g.var(dim=0).sum().item():.2f}")
+```
+
+### 第 3 集 GRPO 的 group-relative advantage — 狀態：可用
+
+**題目**
+
+一組 8 個回答、答對 \\( k \\) 個（\\( k = 1, \dots, 7 \\)），獎勵是 1 或 0。對每個 \\( k \\)，用 `group_advantages` 印出答對與答錯的回答的 advantage，不除與除以標準差兩種都印。\\( k = 4 \\) 時，答對與答錯的 advantage 大小相等嗎？\\( k = 1 \\) 時答對的 advantage 是 \\( k = 4 \\) 時的幾倍（兩種算法分別算）？
+
+**練習目標**：group-relative advantage 讓稀有的成功拿到大的推力、常見的成功只拿到小的推力；除以標準差又把這個差距再拉開。
+
+**批改重點**：\\( k = 4 \\) 時兩者大小相等（不除：±0.5；除：±0.935）；\\( k = 1 \\) 時答對的是 +0.875（不除）與 +2.475（除），分別是 \\( k = 4 \\) 時的 1.75 倍與 2.65 倍。答對與答錯的 advantage 加權（各自乘上人數）後總和為 0。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import group_advantages
+
+for k in range(1, 8):  # 8 個回答裡答對 k 個
+    rewards = torch.tensor([[1.0] * k + [0.0] * (8 - k)])
+    plain, normed = group_advantages(rewards, normalize_std=False)[0], group_advantages(rewards, normalize_std=True)[0]
+    print(f"答對 {k} 個：答對的 advantage {plain[0]:+.3f}（不除）{normed[0]:+.3f}（除）；答錯的 {plain[-1]:+.3f}（不除）{normed[-1]:+.3f}（除）")
+```
+
+### 第 4 集 GRPO loss 實作與測試 — 狀態：可用
+
+**題目**
+
+對 `clip_eps` 取 0.1、0.2、0.5，把比值從 0.35 到 1.95（間隔 0.1，每個值的小數是 5，避開剛好等於 \\( 1 \pm \varepsilon \\) 的邊界）掃一遍。對 advantage 是 +1 與 -1 兩種情況，用 `grpo_loss`（一個 token、`old_logp = 0`）數出「梯度剛好是 0」的比值有哪些，範圍落在哪裡。再回答：把 `clip_eps` 設成很大（例如 100），結果會變成什麼？
+
+**練習目標**：看懂 clip 是單側的：advantage 為正，只在比值高過 \\( 1+\varepsilon \\) 時關掉梯度；advantage 為負，只在低過 \\( 1-\varepsilon \\) 時關掉。
+
+**批改重點**：\\( A=+1 \\) 時，梯度為 0 的是比值高於 \\( 1+\varepsilon \\) 的那些（\\( \varepsilon \\) 為 0.1、0.2、0.5 時各 9、8、5 個，範圍 1.15～1.95、1.25～1.95、1.55～1.95）；\\( A=-1 \\) 時是低於 \\( 1-\varepsilon \\) 的那些（6、5、2 個，範圍 0.35～0.85、0.35～0.75、0.35～0.45）。同一個比值在兩種 advantage 下不會同時梯度為 0。\\( \varepsilon \\) 很大時 clip 永遠碰不到，loss 變成沒有 clip 的 \\( -\rho A \\) 的平均，也就是只靠 \\( \rho \\) 修正的 policy gradient，一批 rollout 更新很多次就可能把模型推得很遠。
+
+**參考答案**
+
+```python
+import math
+
+import torch
+
+from llmz.rl import grpo_loss
+
+
+def grad_at(ratio, advantage, eps):
+    logp = torch.tensor([[math.log(ratio)]], requires_grad=True)
+    grpo_loss(logp, torch.zeros(1, 1), torch.tensor([advantage]), torch.ones(1, 1, dtype=torch.bool), clip_eps=eps).backward()
+    return logp.grad.item()
+
+
+ratios = [0.35 + 0.1 * k for k in range(17)]  # 0.35、0.45、...、1.95：避開 1 ± eps 剛好的邊界
+for eps in [0.1, 0.2, 0.5]:
+    for advantage in [+1.0, -1.0]:
+        silent = [r for r in ratios if grad_at(r, advantage, eps) == 0.0]
+        print(f"eps={eps} A={advantage:+.0f}：{len(silent)} 個比值梯度為 0，範圍 {min(silent):.2f}～{max(silent):.2f}")
+```
+
+### 第 5 集 RLVR：用可驗證獎勵訓練 SFT 模型 — 狀態：可用
+
+**題目**
+
+用 `rollout` 對第 14 章的 SFT 模型（`runs/sft/model.pt`）取樣：`color` 題與 `who` 題各 64 題、每題 8 個回答（`temperature=1.0`，`torch.manual_seed(0)`）。各自數出：平均獎勵、整組全對的題數、整組全錯的題數、有對有錯的題數。只有「有對有錯」的組 advantage 不是 0；如果每一題答對的機率都是亂猜的 1/2（`color`）與 1/3（`who`），有對有錯的組應該佔幾成？實際數字和它一樣嗎？
+
+**練習目標**：RLVR 的訓練訊號只來自「組內有對有錯」的題目；整組全錯（或全對）的題目這一步等於白跑。
+
+**批改重點**：若每題的答對機率都一樣是 \\( p \\)，一組 8 個全對或全錯的機率是 \\( p^8 + (1-p)^8 \\)：`color`（\\( p=1/2 \\)）約 0.8%、`who`（\\( p=1/3 \\)）約 3.9%，所以有對有錯的組應該有 99% 與 96% 左右。實際一次的結果（CPU，種子 0）：`color` 平均獎勵 0.47，全對 0、全錯 2、有對有錯 62（97%）；`who` 平均獎勵 0.33，全對 0、全錯 6、有對有錯 58（91%）。`who` 的全錯組比預期多：模型對每一題不是都剛好 1/3，有些題它偏向一個錯的名字，答對機率比 1/3 低很多。數字隨種子與機器略有不同。
+
+**參考答案**
+
+```python,norun
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.posttrain import make_tasks
+from llmz.rl import rollout
+from llmz.tokenizer import Tokenizer
+
+tokenizer = Tokenizer.load("data/tokenizer.json")
+model = TransformerLM(ModelConfig())
+model.load_state_dict(torch.load("runs/sft/model.pt", map_location="cpu"))
+
+for kind in ["color", "who"]:
+    torch.manual_seed(0)
+    tasks = make_tasks(64, seed=0, kinds=(kind,))
+    rewards = rollout(model, tokenizer, tasks, group_size=8, max_new_tokens=4).rewards  # (64, 8)
+    all_right = int((rewards.min(dim=1).values == 1).sum())
+    all_wrong = int((rewards.max(dim=1).values == 0).sum())
+    mixed = 64 - all_right - all_wrong  # 只有這些組的 advantage 不是 0
+    print(f"{kind:5s} 平均獎勵 {rewards.mean():.2f}  整組全對 {all_right}  整組全錯 {all_wrong}  有對有錯 {mixed}（{mixed / 64:.0%}）")
+```
+
+### 第 6 集 Dr. GRPO、GSPO 一瞥 — 狀態：可用
+
+**題目**
+
+GSPO 的序列比值是各 token 的 log 比值取**平均**再 `exp`（幾何平均）。如果改成**加總**再 `exp`（整條回答的機率比），會怎樣？對長度 1、2、4、8、16 的回答，每個 token 的 log 比值都是 0.05（比值 1.051，每個 token 單看都在 \\( [0.8, 1.2] \\) 裡）：算兩種序列比值，並用 advantage +1、`clip_eps=0.2` 的 loss 梯度，看哪些長度的回答被整條擋住（梯度全是 0）。再確認平均那一種就是 `grpo_loss(..., seq_ratio=True)`。
+
+**練習目標**：為什麼 GSPO 的序列比值要除以長度：不除的話，比值隨回答長度指數成長，不同長度的回答要用不同的 clip 範圍。
+
+**批改重點**：平均的比值對每個長度都是 1.051，梯度都在；加總的比值是 \\( e^{0.05n} \\)：1.051、1.105、1.221、1.492、2.226，長度 4 以上超過 1.2，整條回答梯度全是 0。要讓長度 16 的回答不被擋，clip 的上限至少要 2.23，也就是說同一個 \\( \varepsilon \\) 對長的回答太嚴、對短的回答太鬆。最後一行印出 `True`。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import grpo_loss
+
+
+def sequence_loss(log_ratio, advantage, how, eps=0.2):
+    """一條回答、一個序列比值：how="平均" 是 GSPO（幾何平均），how="加總" 是整條回答的機率比。"""
+    s = (log_ratio.mean() if how == "平均" else log_ratio.sum()).exp()
+    return -torch.minimum(s * advantage, s.clamp(1 - eps, 1 + eps) * advantage)
+
+
+print("長度  平均的比值  加總的比值  平均版有梯度  加總版有梯度")
+for n in [1, 2, 4, 8, 16]:
+    log_ratio = torch.full((n,), 0.05, requires_grad=True)  # 每個 token 的比值都是 e^0.05 = 1.051，單看每個 token 都在 0.8～1.2 裡
+    grads, ratios = {}, {}
+    for how in ["平均", "加總"]:
+        log_ratio.grad = None
+        sequence_loss(log_ratio, 1.0, how).backward()
+        grads[how] = log_ratio.grad.abs().sum().item() > 0
+        ratios[how] = (log_ratio.mean() if how == "平均" else log_ratio.sum()).exp().item()
+    print(f"{n:3d}  {ratios['平均']:9.3f}  {ratios['加總']:9.3f}  {str(grads['平均']):>10s}  {str(grads['加總']):>10s}")
+
+# 平均版就是 llmz 的 seq_ratio=True
+logp = torch.full((1, 8), 0.05, requires_grad=True)
+mask = torch.ones(1, 8, dtype=torch.bool)
+by_llmz = grpo_loss(logp, torch.zeros(1, 8), torch.ones(1), mask, seq_ratio=True)
+by_hand = sequence_loss(torch.full((8,), 0.05), 1.0, "平均")
+print("和 grpo_loss(seq_ratio=True) 一致：", torch.allclose(by_llmz, by_hand))
+```
+
+### 第 7 集 vLLM rollout（選讀：需 GPU） — 狀態：可用
+
+**題目**
+
+在 CPU 上，用隨機初始化的小模型（`d_model=128`、2 層）、64 條各 16 個 token 的提示，量 `sample_batch` 生成 4、16、64、128 個 token 各要多久（rollout），與對同一批「提示加回答」做一次 forward 加 backward（更新）要多久。印出 rollout 占兩者加總的比例。比例隨回答長度怎麼變？為什麼？
+
+**練習目標**：rollout 是一步接一步的 decode，更新是整批一次算完，所以回答越長，rollout 越成為 RL 的瓶頸，這是 RL 要用 vLLM 這類推論引擎的原因。
+
+**批改重點**：rollout 的時間幾乎和回答長度成正比（生成 128 個 token 約是 4 個的 20 倍）；更新的時間成長慢得多（序列變長，但所有 token 一起算）。所以 rollout 的比例隨長度上升，一開始快、後來趨緩（某一次：42%、62%、85%、88%）。實際的秒數隨機器與當時的負載不同，但「比例隨長度上升」的趨勢要看得到。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.profile import timeit
+from llmz.rl import sample_batch, token_logprobs
+
+torch.manual_seed(0)
+device = torch.device("cpu")
+model = TransformerLM(ModelConfig(vocab_size=257, context_length=256, d_model=128, n_layers=2, n_heads=4, d_ff=256))
+prompts = torch.randint(0, 257, (64, 16))  # 64 條提示，每條 16 個 token
+
+print("回答長度  rollout     更新（forward + backward）  rollout 的比例")
+for n in [4, 16, 64, 128]:
+    ids = sample_batch(model, prompts, n)  # (64, 16 + n)
+
+    def update():
+        token_logprobs(model, ids).sum().backward()
+        model.zero_grad()
+
+    t_rollout = timeit(lambda: sample_batch(model, prompts, n), device, warmup=1, repeat=3)
+    t_update = timeit(update, device, warmup=1, repeat=3)
+    print(f"{n:6d}  {t_rollout:8.3f} 秒  {t_update:12.3f} 秒  {t_rollout / (t_rollout + t_update):14.0%}")
+```
+
+## 附錄三
+
+### a 對照 CS336 A4、A5 — 狀態：可用
+
+**題目**
+
+附錄三的對照表說，本書的 `group_advantages` 沒有「再除以組內平均」的選項（`compute_group_normalized_rewards_maxrl` 那一列；A5 手冊用的 MaxRL 版本，出處 Tajwar 等人 2026，arXiv 2602.02710）。用 `group_advantages(rewards, normalize_std=False)` 的結果，自己再除以「組內平均加 `1e-6`」。一組 8 個回答裡答對 0、1、4、7、8 個的五種情況，各印出答對的回答與答錯的回答，在「不除」「除以標準差」「除以平均」三種做法下的 advantage。除以平均和除以標準差比，哪一種組被放大得最多？哪一種組反而縮小？
+
+**練習目標**：`group_advantages` 之外還有第三種分母；除以平均讓稀有的成功拿到比除以標準差更大的權重，簡單題卻縮小。
+
+**批改重點**：答對 1 個：答對的回答 +0.875、+2.475、+7.000，答錯的 −0.125、−0.354、−1.000；答對 4 個：±0.500、±0.935、±1.000；答對 7 個：答對的 +0.125、+0.354、+0.143，答錯的 −0.875、−2.475、−1.000；答對 0 個與 8 個全是 0（`1e-6` 讓全錯的組不會除以 0）。除以平均時，只要組內有對有錯，答錯的 advantage 一律是 −1，答對的是 `(1 - 平均) / 平均`。答對 1 個的組放大最多（7.0，是不除的 8 倍、除以標準差的 2.8 倍）；答對 7 個的組反而縮小（0.143 對 0.354）。這只是 advantage 的算法，不是整個 MaxRL。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import group_advantages
+
+G, EPS = 8, 1e-6  # 一組 8 個回答；EPS 讓全錯的組（平均是 0）不會除以 0
+
+
+def mean_advantages(rewards: torch.Tensor, eps: float = EPS) -> torch.Tensor:
+    """(r - 組內平均) / (組內平均 + eps)：先用 group_advantages 減掉平均，再除以組內平均。"""
+    return group_advantages(rewards, normalize_std=False) / (rewards.mean(dim=1, keepdim=True) + eps)
+
+
+for k in [0, 1, 4, 7, 8]:
+    rewards = torch.tensor([[1.0] * k + [0.0] * (G - k)])  # 8 個回答裡 k 個答對
+    centered, normalized, divided = group_advantages(rewards, normalize_std=False), group_advantages(rewards), mean_advantages(rewards)
+    print(f"{k} 個答對：不除 {centered[0, 0]:+.3f}、除以標準差 {normalized[0, 0]:+.3f}、除以平均 {divided[0, 0]:+.3f}；答錯的是 {centered[0, -1]:+.3f}、{normalized[0, -1]:+.3f}、{divided[0, -1]:+.3f}")
+```
