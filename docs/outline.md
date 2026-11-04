@@ -65,3 +65,6 @@ a CUDA 與 Triton 入門指引（選讀）· b 對照 CS336 A2、A3
 
 ## 第 15 章 後訓練：RL 與可驗證獎勵
 01 policy gradient 直覺 · 02 REINFORCE 玩具版 · 03 GRPO 的 group-relative advantage · 04 GRPO loss 實作與測試 · 05 RLVR · 06 Dr. GRPO、GSPO 一瞥 · 07 vLLM rollout（選讀：需 GPU）
+
+## 附錄三
+a 對照 CS336 A4、A5

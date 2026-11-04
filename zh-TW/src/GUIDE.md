@@ -56,7 +56,7 @@
 
 ### 已出版與未出版的章節
 
-全書三部、15 章、2 個附錄。`SUMMARY.md` 裡有連結的才已經寫完；寫成 `- [標題]()`、沒有路徑的是還沒寫的章節。
+全書三部、15 章、3 個附錄。`SUMMARY.md` 裡有連結的才已經寫完；寫成 `- [標題]()`、沒有路徑的是還沒寫的章節。
 
 目前已經寫完：
 
@@ -84,8 +84,9 @@
 | 第 15 章（第 1～3 集） | 後訓練：RL 與可驗證獎勵：policy gradient 直覺、REINFORCE 玩具版、GRPO 的 group-relative advantage | `chapter15/` |
 | 第 15 章（第 4～5 集） | 後訓練：RL 與可驗證獎勵：GRPO loss 實作與測試、RLVR | `chapter15/` |
 | 第 15 章（第 6～7 集） | 後訓練：RL 與可驗證獎勵：Dr. GRPO、GSPO 一瞥、vLLM rollout（選讀：需 GPU） | `chapter15/` |
+| 附錄三 | 對照 CS336 A4、A5 | `appendix3/` |
 
-還沒寫：第三部收尾（對照 CS336 A4、A5，位置尚未決定）。各章預計內容見 `SUMMARY.md` 的標題。
+全書都已經寫完。
 
 ---
 
@@ -215,7 +216,7 @@
 | 第 15 章第 5 集 | `llmz.rl` 的 `rollout`（每題抽一組回答、保留 token id 與只涵蓋回答的 `mask`（到第一個 `<|endoftext|>` 為止、含它）、`rewards` 形狀 `(題數, group_size)`）、`sample_batch`（和第 11 章的 `generate_cached` 同一套 KV cache，抽樣改成整個 batch 一次抽、不支援 `top_p`；M4 Max 上 128 條回答 `generate_cached` 3.8～5.0 秒、`sample_batch` 0.15～0.25 秒）、`RLVRConfig`、`train_rlvr`（每步：rollout、`reward` 的 0／1、`group_advantages`、不帶梯度的 `old_logp`、對同一批 `epochs` 次 `grpo_loss` 更新；記錄 `reward`／`clip_frac`／`mixed_groups`／`resp_len`／`grad_norm`；沒有 KL 與 reference 模型）、`tools/rlvr.py`、RLVR（用可驗證的 0／1 獎勵）、隨機初始化的模型獎勵全是 0、沒有梯度（所以要先 SFT）、`mixed_groups`（組內有對有錯的比例，只有這些組有梯度）、policy 的「信心」（第一個回答 token 的最大機率）；M4 Max 實測（1000 題 greedy，單次）：SFT 模型上訓練 `color` 與 `who`（預設：學習率 `3e-5`、600 步、約 6.4 分鐘、兩個種子）合計 0.401 變成 0.418～0.426（在雜訊內，沒有學會；`color` 0.491 變成 0.495～0.534、`who` 0.304 變成 0.310～0.335），`mixed_groups` 從 0.33～0.46 掉到 0.07～0.13、信心 0.56 升到 0.95 以上，沒練的 `count` 從 192／192 掉到 141～147；學習率 `1e-5`／`1e-4`／`3e-4` 也沒有進步；對照：只 SFT 100 步（`runs/sft_short`）再用 RLVR 練 `add` 與 `subtract`（`--lr 1e-5`、600 步、各約 313 秒）0.266 變成 0.591～0.694（`add` 0.289 變成 0.910、`subtract` 0.246 變成 0.324～0.513），約 300～350 步後因為組內不再有對有錯而停住；RLVR 放大模型已經有時候會做對的事，沒有可以放大的東西時只會讓模型更確定 |
 | 第 15 章第 6 集 | `llmz.rl` 的 `importance_ratio`（`seq_ratio=False`：每個 token 一個比值，被遮掉的位置先歸零再 `exp`；`seq_ratio=True`：整條回答一個，是 `mask` 內各 token 的 log 比值取平均再 `exp`，也就是幾何平均）、`grpo_loss` 新增的 `seq_ratio` 與 `length_divisor`（`length_norm=False` 時 token 加總除以固定的數，預設 1.0）、`RLVRConfig` 同名的欄位（`train_rlvr` 的 `clip_frac` 跟著 `seq_ratio`）、`tools/rlvr.py` 的 `--seq_ratio` 與 `--length_divisor`；Dr. GRPO（Liu 等人 2025，arXiv 2503.20783）指出 GRPO 的兩個偏差：長度偏差（除以回答的 token 數，答錯的長回答每個 token 被壓得比較輕）與難度偏差（除以組內標準差，太容易、太難的題 advantage 被放大），主張拿掉並改除以固定的常數（例如最大生成長度）；GSPO（Zheng 等人 2025，arXiv 2507.18071）的序列層級比值（重要性取樣每個位置只有一個樣本、雜訊隨長度累積）與整條回答一起 clip，clip 範圍比 GRPO 小得多（論文：3e-4 與 4e-4 對 0.2 與 0.27，被 clip 的 token 比例約 0.15 對 0.0013）；序列比值要取平均、不取加總（練習）；M4 Max 實測（`runs/sft_short` 練 `add` 與 `subtract`、學習率 `1e-5`、600 步、兩個種子、每個約 310～323 秒）：GRPO、不除標準差、固定除數、Dr. GRPO、GSPO 的 1000 題 greedy 是 0.558～0.694，看不出哪一種比較好（同一個做法的兩個種子差 0.07～0.10，不比做法之間的差距小）；回答都是 2 個 token，`length_norm` 只差一個常數倍（`grad_norm` 剛好減半）；不除標準差梯度小 2～3.5 倍但 `AdamW` 吸收了；GSPO 在 `clip_eps=0.2` 的 `clip_frac` 是 0.001～0.0012（GRPO 是 0.0024～0.0043），縮小到 0.02 是 0.038 與 0.135，正確率沒有變 |
 | 第 15 章第 7 集 | rollout 是一個 token 接一個 token 的 decode，時間和回答長度成正比（M4 Max 上 128 條一起、一步約 0.036～0.038 秒），更新是整批一次算；rollout 占一步的比例：回答 4 個 token 時 39～44%，64 個 token 以上 65～76%（三次執行的範圍）；OpenRLHF 的 README 說他們的 RLHF 有 80% 的時間在取樣；推論引擎 vLLM（continuous batching、PagedAttention（Kwon 等人 2023，arXiv 2309.06180）、automatic prefix caching、`SamplingParams` 的 `n`）與它的用法（`LLM`、`SamplingParams`、`generate`、`RequestOutput` 的 `prompt_token_ids` 與 `outputs`、`CompletionOutput` 的 `text`／`token_ids`／`logprobs`／`finish_reason`，`python,norun`：沒有 NVIDIA 顯示卡，沒跑過）；用推論引擎多出來的三件事：權重要同步（TRL 的 `use_vllm`、`colocate` 與 `server`）、兩邊的機率有差距（所以用訓練程式重算 `old_logp`，GSPO 論文主張序列層級的比值比較能容忍）、要等最長的回答（partial rollout）；`sample_batch` 與 vLLM 的差別；第 15 章的自我挑戰（`tests/test_rl.py`） |
-| 第三部收尾（對照 CS336 A4、A5） | 尚未出版 |
+| 附錄三 | CS336 A4（Data）、A5（Alignment）的對照表：2026 年春季版手冊（A4 Version 26.0.1、A5 主手冊與補充手冊 Version 26.0.0）每個作業項目（problem 代號）對應的集數、`llmz` 的函式與本書沒做到的部分；A5 主作業是 Reasoning RL（對應第 15 章）、SFT 與 DPO 在選修的補充手冊（對應第 14 章）；一個練習：在 `group_advantages` 之外再除以組內平均（MaxRL 的 advantage，Tajwar 等人 2026，arXiv 2602.02710），比較不除、除以標準差、除以平均三種做法（不加新函式） |
 
 ### 4.2 固定句型
 
@@ -355,6 +356,7 @@
 | `rollout`、`sample_batch`、`RLVRConfig`、`train_rlvr`、`tools/rlvr.py`、RLVR | 第 15 章第 5 集 | 只說「用可驗證獎勵訓練模型」，不談怎麼把 GRPO 接到語言模型 |
 | Dr. GRPO、`length_divisor`、GSPO、`seq_ratio`、序列層級的比值、長度偏差與難度偏差 | 第 15 章第 6 集 | 只說 GRPO 的比值是每個 token 一個、advantage 除以標準差、loss 除以回答長度，不談它們各帶來什麼偏差 |
 | vLLM、PagedAttention 與 prefix caching 用在 rollout、權重同步、訓練與推論引擎的機率差距、partial rollout | 第 15 章第 7 集 | 只用自己的 `sample_batch`，不談推論引擎 |
+| CS336 A4、A5 的作業項目對照表、MaxRL 的 advantage（除以組內平均） | 附錄三 a | 不提作業項目；讀者問起時只給 <https://cs336.stanford.edu> 與作業 repo 的連結 |
 
 ---
 

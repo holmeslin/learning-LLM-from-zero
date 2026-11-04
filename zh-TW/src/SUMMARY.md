@@ -172,3 +172,5 @@
     - [RLVR：用可驗證獎勵訓練 SFT 模型](chapter15/05_rlvr.md)
     - [Dr. GRPO、GSPO 一瞥](chapter15/06_dr_grpo_gspo.md)
     - [vLLM rollout（選讀：需 GPU）](chapter15/07_vllm_rollout.md)
+- [附錄三](appendix3/README.md)
+    - [對照 CS336 A4、A5](appendix3/a_cs336_a4_a5.md)

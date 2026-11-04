@@ -3535,3 +3535,36 @@ for n in [4, 16, 64, 128]:
     t_update = timeit(update, device, warmup=1, repeat=3)
     print(f"{n:6d}  {t_rollout:8.3f} 秒  {t_update:12.3f} 秒  {t_rollout / (t_rollout + t_update):14.0%}")
 ```
+
+## 附錄三
+
+### a 對照 CS336 A4、A5 — 狀態：可用
+
+**題目**
+
+附錄三的對照表說，本書的 `group_advantages` 沒有「再除以組內平均」的選項（`compute_group_normalized_rewards_maxrl` 那一列；A5 手冊用的 MaxRL 版本，出處 Tajwar 等人 2026，arXiv 2602.02710）。用 `group_advantages(rewards, normalize_std=False)` 的結果，自己再除以「組內平均加 `1e-6`」。一組 8 個回答裡答對 0、1、4、7、8 個的五種情況，各印出答對的回答與答錯的回答，在「不除」「除以標準差」「除以平均」三種做法下的 advantage。除以平均和除以標準差比，哪一種組被放大得最多？哪一種組反而縮小？
+
+**練習目標**：`group_advantages` 之外還有第三種分母；除以平均讓稀有的成功拿到比除以標準差更大的權重，簡單題卻縮小。
+
+**批改重點**：答對 1 個：答對的回答 +0.875、+2.475、+7.000，答錯的 −0.125、−0.354、−1.000；答對 4 個：±0.500、±0.935、±1.000；答對 7 個：答對的 +0.125、+0.354、+0.143，答錯的 −0.875、−2.475、−1.000；答對 0 個與 8 個全是 0（`1e-6` 讓全錯的組不會除以 0）。除以平均時，只要組內有對有錯，答錯的 advantage 一律是 −1，答對的是 `(1 - 平均) / 平均`。答對 1 個的組放大最多（7.0，是不除的 8 倍、除以標準差的 2.8 倍）；答對 7 個的組反而縮小（0.143 對 0.354）。這只是 advantage 的算法，不是整個 MaxRL。
+
+**參考答案**
+
+```python
+import torch
+
+from llmz.rl import group_advantages
+
+G, EPS = 8, 1e-6  # 一組 8 個回答；EPS 讓全錯的組（平均是 0）不會除以 0
+
+
+def mean_advantages(rewards: torch.Tensor, eps: float = EPS) -> torch.Tensor:
+    """(r - 組內平均) / (組內平均 + eps)：先用 group_advantages 減掉平均，再除以組內平均。"""
+    return group_advantages(rewards, normalize_std=False) / (rewards.mean(dim=1, keepdim=True) + eps)
+
+
+for k in [0, 1, 4, 7, 8]:
+    rewards = torch.tensor([[1.0] * k + [0.0] * (G - k)])  # 8 個回答裡 k 個答對
+    centered, normalized, divided = group_advantages(rewards, normalize_std=False), group_advantages(rewards), mean_advantages(rewards)
+    print(f"{k} 個答對：不除 {centered[0, 0]:+.3f}、除以標準差 {normalized[0, 0]:+.3f}、除以平均 {divided[0, 0]:+.3f}；答錯的是 {centered[0, -1]:+.3f}、{normalized[0, -1]:+.3f}、{divided[0, -1]:+.3f}")
+```
