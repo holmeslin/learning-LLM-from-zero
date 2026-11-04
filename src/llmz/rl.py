@@ -7,7 +7,7 @@ import json
 import os
 import time
 from dataclasses import asdict, dataclass, field
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import torch
 from torch import Tensor, nn
@@ -17,7 +17,7 @@ from llmz.functional import log_softmax, softmax
 from llmz.inference import KVCache, forward_cached
 from llmz.model import ModelConfig, TransformerLM
 from llmz.optim import AdamW, clip_grad_norm_
-from llmz.posttrain import END, accuracy, encode_chat, make_tasks, pad_batch, reward, task_messages
+from llmz.posttrain import END, Task, accuracy, encode_chat, make_tasks, pad_batch, reward, task_messages
 from llmz.tokenizer import Tokenizer
 
 
@@ -179,8 +179,10 @@ class Rollout(NamedTuple):
     rewards: Tensor  # (題數, group_size)：每個回答的獎勵
 
 
-def rollout(model: nn.Module, tokenizer, tasks: list, group_size: int, max_new_tokens: int = 8, temperature: float = 1.0) -> Rollout:
+def rollout(model: nn.Module, tokenizer, tasks: list, group_size: int, max_new_tokens: int = 8, temperature: float = 1.0,
+            reward_fn: Callable[[Task, str], float] = reward) -> Rollout:
     """每一題抽 group_size 個回答，並且把 token id 留下來（posttrain.generate_replies 只回傳字串，不夠 GRPO 用）。
+    reward_fn(task, reply) -> float 是獎勵函式，預設是第 14 章的 0/1 `reward`；換成別的函式，RLVR 就換了一個目標。
     長度相同的提示放在同一個 batch（KV cache 的要求，和 generate_cached 一樣），最後照原本的順序排回去。
     結尾 <|endoftext|> 也算回答的一部分：模型要學會「什麼時候停」。"""
     device = next(model.parameters()).device
@@ -195,7 +197,7 @@ def rollout(model: nn.Module, tokenizer, tasks: list, group_size: int, max_new_t
         for i, new in zip(rows, out[:, length:].tolist()):
             n = new.index(end_id) + 1 if end_id in new else len(new)  # 回答的 token 數（含結尾）
             examples[i] = (prompts[i] + new, [False] * length + [True] * n + [False] * (len(new) - n))
-            rewards[i] = reward(tasks[i // group_size], tokenizer.decode(new[: n - 1] if end_id in new else new))
+            rewards[i] = reward_fn(tasks[i // group_size], tokenizer.decode(new[: n - 1] if end_id in new else new))
     ids, mask = pad_batch(examples)
     return Rollout(ids, mask, torch.tensor(rewards).reshape(len(tasks), group_size))
 # ANCHOR_END: rollout
@@ -229,8 +231,9 @@ class RLVRConfig:
     device: str = ""  # 空字串代表用 get_device()
 
 
-def train_rlvr(cfg: RLVRConfig, tokenizer=None) -> list[dict]:
-    """RLVR 主迴圈：rollout -> 0/1 獎勵 -> group advantage -> 對同一批 rollout 更新 epochs 次。回傳 log 紀錄。"""
+def train_rlvr(cfg: RLVRConfig, tokenizer=None, reward_fn: Callable[[Task, str], float] = reward) -> list[dict]:
+    """RLVR 主迴圈：rollout -> 獎勵 -> group advantage -> 對同一批 rollout 更新 epochs 次。回傳 log 紀錄。
+    reward_fn 不放進 RLVRConfig（函式存不進 config.json）；val_accuracy 一律用 `reward` 量，不管訓練用的是哪個獎勵。"""
     torch.manual_seed(cfg.seed)
     device = torch.device(cfg.device) if cfg.device else get_device()
     os.makedirs(cfg.out_dir, exist_ok=True)
@@ -254,7 +257,7 @@ def train_rlvr(cfg: RLVRConfig, tokenizer=None) -> list[dict]:
     log({"step": 0, "val_accuracy": accuracy(model, tokenizer, valid_tasks, cfg.max_new_tokens)})
     for step in range(1, cfg.max_steps + 1):
         tasks = train_tasks[(step - 1) * cfg.prompts_per_step : step * cfg.prompts_per_step]
-        out = rollout(model, tokenizer, tasks, cfg.group_size, cfg.max_new_tokens, cfg.temperature)
+        out = rollout(model, tokenizer, tasks, cfg.group_size, cfg.max_new_tokens, cfg.temperature, reward_fn)
         ids, mask = out.ids.to(device), out.mask.to(device)[:, 1:]  # mask 跟著 token_logprobs 少一格
         advantages = group_advantages(out.rewards, cfg.normalize_std).reshape(-1).to(device)
         with torch.no_grad():

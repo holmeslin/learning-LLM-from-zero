@@ -161,10 +161,12 @@ def ngram_index(tokens, n: int = 13) -> np.ndarray:
 
 def contamination_rate(tokens, index: np.ndarray, n: int = 13) -> float:
     """tokens 的 n-gram 有多少比例出現在 index 裡（0～1）。n 要和建 index 時一樣。
-    不到 n 個 token 就沒有 n-gram，無從判斷，回傳 nan（不是 0：「沒查到」和「沒辦法查」不一樣）。"""
+    不到 n 個 token 就沒有 n-gram，無從判斷，回傳 nan（不是 0：「沒查到」和「沒辦法查」不一樣）。index 是空的（語料不到 n 個 token）就什麼都查不到，回傳 0。"""
     grams = ngram_hashes(tokens, n)
     if len(grams) == 0:
         return float("nan")
+    if len(index) == 0:
+        return 0.0
     pos = np.minimum(np.searchsorted(index, grams), len(index) - 1)
     return float((index[pos] == grams).mean())
 # ANCHOR_END: contamination

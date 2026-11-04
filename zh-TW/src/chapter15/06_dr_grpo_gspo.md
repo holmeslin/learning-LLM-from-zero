@@ -178,7 +178,7 @@ gspo         0.418  0.548  0.578  0.628  0.628      0.0010       0.83
 
 訓練完用第 5 集最後那段評估程式（1000 題 greedy、取樣獎勵、信心），把 `setups` 換成下面這些模型（第一個是只 SFT 100 步的起點）：
 
-```python,ignore
+```python,norun
 setups = [(("add", "subtract"), [
     "runs/sft_short/model.pt",
     "runs/rlvr_short/model.pt", "runs/rlvr_short_nostd/model.pt", "runs/rlvr_short_nolen/model.pt", "runs/rlvr_short_dr/model.pt", "runs/rlvr_short_gspo/model.pt",

@@ -278,6 +278,13 @@ def test_contamination_of_text_shorter_than_n_is_undefined():
     assert np.isnan(contamination_rate(random_tokens(12, seed=0), index))  # 沒有 13-gram 就不能說乾淨
 
 
+def test_contamination_against_an_empty_index_is_zero_not_an_error():
+    empty = ngram_index(random_tokens(12, seed=0))  # 語料不到 13 個 token：index 是空的
+    assert len(empty) == 0
+    assert contamination_rate(random_tokens(30, seed=1), empty) == 0.0  # 空集合裡什麼都查不到
+    assert np.isnan(contamination_rate(random_tokens(12, seed=1), empty))  # 查詢的文字太短，照舊是 nan
+
+
 def test_contamination_works_on_the_uint16_memmap_layout_of_the_corpus(tmp_path):
     corpus = random_tokens(2000, seed=0).astype(np.uint16)
     corpus.tofile(tmp_path / "t.bin")

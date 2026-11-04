@@ -30,7 +30,7 @@ uv run tools/plot_loss.py runs/base -o loss.png     # 畫 loss 曲線
 
 - `src/llmz/`：全書逐章累積的套件（tokenizer、模型、優化器……），書中用 mdBook 的 `{{#include}}` 以 anchor 引入片段，所以書上看到的程式碼就是 `tests/` 驗證過的版本。
 - `zh-TW/src/`：mdBook 內容。每個 ```` ```python ```` 區塊都會被 `tools/checkcode.py` 實際執行。
-- `tools/`：`checkcode.py`（驗證書中範例）、`prepare_data.py`、`train.py`、`plot_loss.py`。
+- `tools/`：`checkcode.py`（驗證書中範例）、`prepare_data.py`、`train.py`、`plot_loss.py`；第 10 章 `scaling_sweep.py`、`plot_scaling.py`；第 13 章 `prepare_webtext.py`（網頁文字）、`train_quality.py`（品質分類器）；第 14 章 `sft.py`、`dpo.py`；第 15 章 `rlvr.py`。
 - `playground/`、`data/`、`runs/`：讀者的練習檔、語料與訓練輸出，都在 `.gitignore` 裡。
 
 ### 範例程式碼標註

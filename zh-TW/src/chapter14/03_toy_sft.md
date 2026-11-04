@@ -73,6 +73,44 @@ uv run tools/sft.py
 
 ### 前後的正確率
 
+量正確率要讓模型一次回答上千題。`generate_replies` 用第 11 章的 `generate_cached`，KV cache 要求同一個 batch 的 prompt 一樣長，所以它把長度相同的 prompt 放在一起生成，最後照原本的順序排回去；`accuracy` 是 greedy 回答每一題、用 `reward` 打分的平均：
+
+```python,ignore
+{{#include ../../../src/llmz/posttrain.py:replies}}
+```
+
+沒訓練過的小模型就能看出它怎麼用：一次放四題（長度不一樣）的結果，和一題一題問的結果一樣；隨機初始化的模型不會答對任何一題：
+
+```python
+import torch
+
+from llmz.model import ModelConfig, TransformerLM
+from llmz.posttrain import accuracy, generate_replies, make_tasks, task_messages
+from llmz.tokenizer import Tokenizer, base_vocab
+
+END = "<|endoftext|>"
+tokenizer = Tokenizer(base_vocab([END]), [], [END])
+torch.manual_seed(0)
+model = TransformerLM(ModelConfig(vocab_size=257, context_length=256, d_model=64, n_layers=2, n_heads=4, d_ff=128)).eval()
+tasks = make_tasks(4, seed=0)
+prompts = [task_messages(t) for t in tasks]
+together = generate_replies(model, tokenizer, prompts, max_new_tokens=4)
+alone = [generate_replies(model, tokenizer, [prompt], max_new_tokens=4)[0] for prompt in prompts]
+print("題目長度：", [len(t.question) for t in tasks])
+print("一起生成和一題一題生成一樣：", together == alone)
+print("答對的比例：", accuracy(model, tokenizer, tasks, max_new_tokens=4))
+```
+
+執行結果：
+
+```text
+題目長度： [68, 75, 73, 79]
+一起生成和一題一題生成一樣： True
+答對的比例： 0.0
+```
+
+接著量真正的模型：
+
 ```python,norun
 import torch
 

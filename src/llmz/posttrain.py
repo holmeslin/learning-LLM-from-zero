@@ -166,7 +166,7 @@ def reward(task: Task, reply: str) -> float:
 def generate_replies(model: nn.Module, tokenizer, prompts: list[list[dict]], max_new_tokens: int = 8, temperature: float = 0.0) -> list[str]:
     """每個 prompt（訊息列表）一則回覆，到 <|endoftext|> 為止（不含它）；一直沒寫出結尾就收到 max_new_tokens 個 token。
     第 11 章的 generate_cached 要求一個 batch 的 prompt 一樣長，所以長度相同的 prompt 放在一起生成，最後照原本的順序排回去。
-    temperature 大於 0 就是取樣：同一個 prompt 重複放 G 次，就是一組 G 個回答（第 15 章會用）。"""
+    temperature 大於 0 就是取樣：同一個 prompt 重複放 G 次，就是一組 G 個回答。第 15 章要留下每個回答的 token id，回傳字串不夠用，所以另外寫了 rl.rollout。"""
     device = next(model.parameters()).device
     end_id = tokenizer.special_to_id[END]
     encoded = [encode_chat(tokenizer, prompt, generation_prompt=True)[0] for prompt in prompts]

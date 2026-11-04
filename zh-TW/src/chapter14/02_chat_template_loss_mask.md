@@ -8,7 +8,7 @@
 
 ### 把對話排成一串文字
 
-語言模型只吃一串 token。一段對話有「誰說的」這個資訊，得靠約定排進這一串裡，這個約定叫 **chat template**。我們的約定很簡單：
+語言模型只吃一串 token。一段對話有「誰說的」這個資訊，得靠約定排進這一串裡，這個約定叫 **chat template**。我們的約定是這樣：
 
 ```text
 User: Tim has two balls. He finds five more. How many balls does Tim have now?

@@ -280,6 +280,12 @@ def test_rollout_keeps_ids_masks_the_response_and_scores_each_reply(monkeypatch)
     assert not out.mask[2, end_at + 1 :].any()  # 補齊的地方也是 False
 
 
+def test_rollout_scores_replies_with_the_reward_function_it_is_given(monkeypatch):
+    monkeypatch.setattr(llmz.rl, "sample_batch", scripted_generate)
+    out = rollout(tiny_model(), TOK, [SHORT], group_size=2, max_new_tokens=8, reward_fn=lambda task, reply: float(len(reply)))
+    assert torch.equal(out.rewards, torch.tensor([[5.0, 5.0]]))  # " five"、" nine" 各 5 個字元；預設的 reward 會給 [1, 0]
+
+
 def tiny_model():
     torch.manual_seed(0)
     return TransformerLM(TINY)
@@ -332,11 +338,11 @@ def test_first_update_of_a_rollout_is_on_policy_so_nothing_is_clipped(tmp_path):
     assert all(r["clip_frac"] == 0.0 for r in records[1:])  # 只更新一次：ratio 恆為 1
 
 
-def test_rlvr_raises_the_reward_it_is_given(tmp_path, monkeypatch):
+def test_rlvr_raises_the_reward_it_is_given(tmp_path):
     # 隨機初始化的模型答不對任何一題（獎勵全是 0，沒有訊號）。換一個一開始約一半會拿到的 0/1 獎勵：回覆的第一個字元是 ASCII
-    monkeypatch.setattr(llmz.rl, "reward", lambda task, reply: float(reply[:1] != "" and ord(reply[0]) < 128))
+    ascii_first = lambda task, reply: float(reply[:1] != "" and ord(reply[0]) < 128)
     cfg = smoke_config(tmp_path, prompts_per_step=4, group_size=8, max_steps=10, epochs=2, lr=1e-2, eval_every=10, max_new_tokens=2)
-    records = train_rlvr(cfg, TOK)[1:]
+    records = train_rlvr(cfg, TOK, reward_fn=ascii_first)[1:]
     first, last = sum(r["reward"] for r in records[:3]) / 3, sum(r["reward"] for r in records[-3:]) / 3
     assert 0.3 < first < 0.7 and last > first + 0.2  # 種子 0～4 實測：開頭 0.49～0.59，結尾 0.85～0.93
 

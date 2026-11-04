@@ -78,7 +78,7 @@ sample_batch     0.15 秒
 每一步（迴圈裡的 `for step`）：
 
 1. **rollout**：從訓練題裡取 `prompts_per_step`（16）題，每題抽 `group_size`（8）個回答，一共 128 條。
-2. **獎勵與 advantage**：`rollout` 已經用 `reward` 打好 0／1，`group_advantages` 照第 3 集的方法算組內的 advantage（預設除以組內標準差），攤平成每條回答一個數字。
+2. **獎勵與 advantage**：`rollout` 已經用 `reward_fn`（預設就是 `reward`；傳別的函式進來，目標就換了）打好分，`group_advantages` 照第 3 集的方法算組內的 advantage（預設除以組內標準差），攤平成每條回答一個數字。
 3. **`old_logp`**：用現在的模型、不帶梯度，算一次每個 token 的 log 機率。
 4. **更新 `epochs` 次**：每次重算 `logp`、`grpo_loss`、`backward()`、裁剪梯度、`AdamW` 的 `step()`。第 1 次 `logp` 和 `old_logp` 一樣，比值恰好是 1；第 2 次模型已經動過，比值才不是 1，clip 才有機會用到。
 5. **記錄**：`reward` 是這一批 rollout 的平均獎勵；`clip_frac` 是最後一次更新前、比值超出 \\( [1-\varepsilon, 1+\varepsilon] \\) 的 token 比例；`mixed_groups` 是「組內有對有錯」的組的比例，只有這些組的 advantage 不是 0，才有梯度；`resp_len` 是每條回答平均幾個 token（含結尾）。
@@ -271,7 +271,7 @@ uv run tools/rlvr.py --sft_path runs/sft_short/model.pt --kinds add,subtract --l
 
 1000 題驗證。用同一段評估程式，只把 `setups` 換成：
 
-```python,ignore
+```python,norun
 setups = [(("add", "subtract"), ["runs/sft_short/model.pt", "runs/rlvr_short/model.pt", "runs/rlvr_short_seed1/model.pt"])]
 ```
 
